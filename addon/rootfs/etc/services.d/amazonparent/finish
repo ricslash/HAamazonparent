@@ -1,0 +1,6 @@
+#!/usr/bin/with-contenv bashio
+# ==============================================================================
+# S6 service finish script for Amazon Parent Dashboard Auth
+# ==============================================================================
+
+bashio::log.info "Amazon Parent Dashboard Auth Service stopped"
