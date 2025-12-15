@@ -35,4 +35,4 @@ Provides browser-based authentication for Amazon Parent Dashboard integration.
 
 ## Support
 
-Report issues at: https://github.com/yourusername/amazon-parent-dashboard
+Report issues at: https://github.com/ricslash/HAamazonparent/issues

@@ -188,8 +188,8 @@ The integration has been tested with:
 
 ## Support
 
-- **Issues**: https://github.com/yourusername/amazon-parent-dashboard/issues
-- **Discussions**: https://github.com/yourusername/amazon-parent-dashboard/discussions
+- **Issues**: https://github.com/ricslash/HAamazonparent/issues
+- **Discussions**: https://github.com/ricslash/HAamazonparent/discussions
 
 ## License
 
