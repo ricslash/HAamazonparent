@@ -240,11 +240,18 @@ The integration has been tested with:
 
 ## Security Considerations
 
-- Cookies are stored in Home Assistant's shared directory
-- VNC server uses password authentication (default: `amazonparent`)
-- Add-on runs in isolated container
-- No credentials are stored permanently (cookies only)
-- Change VNC password in production deployments
+This integration is designed for home use on **trusted local networks**:
+
+- 🏠 **Local Network Only**: Runs on your local network (not internet-exposed)
+- 🔐 **Encrypted Storage**: Amazon session cookies are encrypted before storage
+- 👁️ **VNC Access**: VNC password (`amazonparent`) allows viewing the browser during authentication
+- 🔒 **Isolated Container**: Add-on runs in isolated Docker container
+- ⚠️ **No Internet Exposure**: Do NOT expose Home Assistant directly to the internet
+- ✅ **Remote Access**: Use a VPN (WireGuard, Tailscale) for remote access instead of port forwarding
+
+**Important**: No credentials are stored permanently (session cookies only).
+
+For detailed security information, see [SECURITY.md](SECURITY.md).
 
 ## Roadmap
 
