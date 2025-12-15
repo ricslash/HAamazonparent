@@ -49,12 +49,34 @@ This project provides two components that work together:
    - Start the add-on
 
 4. Authenticate with Amazon:
+
+   **a. Start the authentication process:**
    - Click "Open Web UI" or navigate to `http://[YOUR_HA_IP]:8100`
    - Click "Start Authentication"
-   - Connect via VNC to see the browser: `vnc://[YOUR_HA_IP]:5903`
-     - Password: `amazonparent`
-   - Sign in to your Amazon account in the VNC browser
-   - Wait for success message
+   - The browser window opens on the server (not visible in the web UI)
+
+   **b. Install a VNC client (if you don't have one):**
+   - **Windows**: Download [TigerVNC](https://github.com/TigerVNC/tigervnc/releases) or [RealVNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)
+   - **macOS**: Use built-in Screen Sharing (Finder → Cmd+K) or [RealVNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)
+   - **Linux**: Install via package manager: `sudo apt install tigervnc-viewer` (Debian/Ubuntu)
+   - **Mobile**: Install "VNC Viewer" app from App Store or Google Play
+
+   **c. Connect to the VNC server:**
+   - **Windows/Linux VNC client**: Enter `[YOUR_HA_IP]:5903` and connect
+   - **macOS Screen Sharing**: Press Cmd+K, enter `vnc://[YOUR_HA_IP]:5903`
+   - **Mobile**: Add connection with address `[YOUR_HA_IP]:5903`
+   - **Password**: `amazonparent`
+
+   **d. Sign in to Amazon:**
+   - You'll see a Chrome browser window showing Amazon's login page
+   - Enter your Amazon email and password
+   - Complete two-factor authentication if prompted
+   - The add-on will automatically detect successful login and save cookies
+
+   **e. Confirmation:**
+   - Return to the add-on Web UI - you should see: "✅ Authentication successful!"
+   - The VNC browser will close automatically
+   - You can now close the VNC connection
 
 ### Step 2: Install Custom Integration
 
