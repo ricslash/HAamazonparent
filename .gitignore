@@ -23,6 +23,11 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
 # PyInstaller
 *.manifest
@@ -74,11 +79,6 @@ celerybeat-schedule
 # Environments
 .env
 .venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
 
 # Spyder project settings
 .spyderproject
@@ -109,14 +109,22 @@ dmypy.json
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+desktop.ini
 
 # Home Assistant
+secrets.yaml
+*.log
 *.db
 *.db-shm
 *.db-wal
 .HA_VERSION
 home-assistant.log
 home-assistant_v2.db
+
+# Cookies and sensitive data
+cookies.json
+*.cookie
+session_data/
 
 # Testing
 .pytest_cache/
