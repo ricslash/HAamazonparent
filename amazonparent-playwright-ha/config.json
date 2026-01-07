@@ -1,0 +1,38 @@
+{
+  "name": "Amazon Parent Dashboard Auth",
+  "version": "0.1.4",
+  "slug": "amazonparent_auth",
+  "description": "Authentication service for Amazon Parent Dashboard integration",
+  "arch": [
+    "amd64",
+    "aarch64",
+    "armv7"
+  ],
+  "init": false,
+  "ports": {
+    "8100/tcp": 8100,
+    "5903/tcp": 5903
+  },
+  "ports_description": {
+    "8100/tcp": "Web UI and API",
+    "5903/tcp": "VNC server for browser access"
+  },
+  "map": [
+    "share:rw"
+  ],
+  "options": {
+    "log_level": "info",
+    "auth_timeout": 300,
+    "session_duration": 86400
+  },
+  "schema": {
+    "log_level": "list(trace|debug|info|warning|error)?",
+    "auth_timeout": "int(60,600)?",
+    "session_duration": "int(3600,604800)?"
+  },
+  "build_from": {
+    "amd64": "ghcr.io/hassio-addons/debian-base:7.3.3",
+    "aarch64": "ghcr.io/hassio-addons/debian-base:7.3.3",
+    "armv7": "ghcr.io/hassio-addons/debian-base:7.3.3"
+  }
+}
