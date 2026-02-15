@@ -1,16 +1,19 @@
 # Amazon Parent Dashboard for Home Assistant
 
-**Version**: 0.1.0
-**Status**: Phase 2 Complete - Ready for Testing
+**Version**: 1.1.0
 
 A complete Home Assistant solution for monitoring and controlling Amazon Parent Dashboard supervised devices (Fire tablets, Echo devices, Kindle devices).
+
+Supports two deployment modes:
+- **Docker Compose** (standalone) — run HA + auth sidecar with `docker compose up`
+- **HA Supervisor Add-on** — install the add-on directly in HA OS/Supervised
 
 ## Overview
 
 This project provides two components that work together:
 
-1. **Authentication Add-on** (`addon/`) - Browser-based authentication service using Playwright and VNC
-2. **Custom Integration** (`custom_components/amazonparent/`) - Home Assistant integration for device control and monitoring
+1. **Authentication Sidecar** (`addon/`) — Browser-based authentication service using Playwright and VNC, with automatic session keep-alive and optional auto re-login
+2. **Custom Integration** (`custom_components/amazonparent/`) — Home Assistant integration for device control and monitoring
 
 ## Features
 
@@ -28,20 +31,103 @@ This project provides two components that work together:
 - Quick pause: 30 minutes
 - Quick pause: 1 hour
 
-## Installation
+### Session Keep-Alive
+- Automatic heartbeat every 45 minutes (configurable) to prevent cookie expiry
+- Cookie rotation detection — updated cookies are saved automatically
+- Auto re-login with stored credentials when session expires (optional)
+- Manual heartbeat trigger via Web UI or API
+- Session health monitoring via `/api/keepalive/status`
+
+---
+
+## Installation — Docker Compose (Recommended)
+
+This is the simplest way to run everything standalone, without HA OS or Supervisor.
 
 ### Prerequisites
 
-- Home Assistant 2023.1 or newer
-- Python 3.11+
-- Supervisor access (for add-on installation)
+- Docker and Docker Compose v2
+- A VNC client for initial authentication
+
+### Step 1: Configure credentials
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your Amazon credentials:
+
+```
+AMAZON_EMAIL=your-email@example.com
+AMAZON_PASSWORD=your-password
+```
+
+These enable automatic re-login when sessions expire. If you omit them, the system still works but you'll need to manually re-authenticate via VNC when cookies expire.
+
+### Step 2: Build and start
+
+```bash
+docker compose up -d
+```
+
+This starts two containers:
+- `amazonparent-auth` — auth sidecar on ports 8100 (API/UI) and 5903 (VNC)
+- `homeassistant` — Home Assistant on the host network
+
+The HA container waits for the auth sidecar health check to pass before starting.
+
+### Step 3: Initial authentication
+
+1. Open `http://localhost:8100` in your browser
+2. Click **Start Authentication**
+3. Connect to VNC at `localhost:5903` (password: `amazonparent`)
+4. Sign in to Amazon in the browser window
+5. Complete 2FA if prompted
+6. The Web UI will show "Authentication successful" when done
+
+### Step 4: Install the integration in HA
+
+1. Copy `custom_components/amazonparent/` into your HA config directory:
+   ```
+   ./ha-config/custom_components/amazonparent/
+   ```
+2. Restart Home Assistant
+3. Go to **Settings** > **Devices & Services** > **Add Integration**
+4. Search for **Amazon Parent Dashboard**
+5. Enter add-on URL: `http://amazonparent-auth:8100`
+
+### Step 5: Verify keep-alive
+
+After initial auth, the keep-alive system starts automatically:
+
+```bash
+# Check session health
+curl http://localhost:8100/api/keepalive/status
+
+# Manually trigger a heartbeat
+curl -X POST http://localhost:8100/api/keepalive/trigger
+
+# Check overall health
+curl http://localhost:8100/api/health
+```
+
+You can also monitor the keep-alive panel in the Web UI at `http://localhost:8100`.
+
+---
+
+## Installation — HA Supervisor Add-on
+
+### Prerequisites
+
+- Home Assistant 2023.1 or newer with Supervisor
+- A VNC client for initial authentication
 
 ### Step 1: Install Authentication Add-on
 
 1. Copy the `addon/` folder to `/addons/amazonparent-playwright-ha/` in your Home Assistant configuration directory
 
 2. Reload the add-on store:
-   - Go to **Supervisor** → **Add-on Store** → **⋮** → **Reload**
+   - Go to **Supervisor** > **Add-on Store** > **...** > **Reload**
 
 3. Install the add-on:
    - Find "Amazon Parent Dashboard Auth" in the local add-ons list
@@ -53,34 +139,28 @@ This project provides two components that work together:
    **a. Start the authentication process:**
    - Click "Open Web UI" or navigate to `http://[YOUR_HA_IP]:8100`
    - Click "Start Authentication"
-   - The browser window opens on the server (not visible in the web UI)
 
    **b. Install a VNC client (if you don't have one):**
    - **Windows**: Download [TigerVNC](https://github.com/TigerVNC/tigervnc/releases) or [RealVNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)
-   - **macOS**: Use built-in Screen Sharing (Finder → Cmd+K) or [RealVNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)
-   - **Linux**: Install via package manager: `sudo apt install tigervnc-viewer` (Debian/Ubuntu)
+   - **macOS**: Use built-in Screen Sharing (Finder > Cmd+K) or [RealVNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)
+   - **Linux**: Install via package manager: `sudo apt install tigervnc-viewer`
    - **Mobile**: Install "VNC Viewer" app from App Store or Google Play
 
    **c. Connect to the VNC server:**
-   - **Windows/Linux VNC client**: Enter `[YOUR_HA_IP]:5903` and connect
-   - **macOS Screen Sharing**: Press Cmd+K, enter `vnc://[YOUR_HA_IP]:5903`
-   - **Mobile**: Add connection with address `[YOUR_HA_IP]:5903`
+   - Enter `[YOUR_HA_IP]:5903` and connect
    - **Password**: `amazonparent`
 
    **d. Sign in to Amazon:**
-   - You'll see a Chrome browser window showing Amazon's login page
-   - Enter your Amazon email and password
+   - Enter your Amazon email and password in the browser window
    - Complete two-factor authentication if prompted
    - The add-on will automatically detect successful login and save cookies
 
    **e. Confirmation:**
-   - Return to the add-on Web UI - you should see: "✅ Authentication successful!"
-   - The VNC browser will close automatically
-   - You can now close the VNC connection
+   - Return to the add-on Web UI — you should see "Authentication successful!"
 
 ### Step 2: Install Custom Integration
 
-1. Copy the `custom_components/amazonparent/` folder to your Home Assistant `custom_components` directory:
+1. Copy `custom_components/amazonparent/` to your HA `custom_components` directory:
    ```
    /config/custom_components/amazonparent/
    ```
@@ -88,20 +168,61 @@ This project provides two components that work together:
 2. Restart Home Assistant
 
 3. Add the integration:
-   - Go to **Settings** → **Devices & Services**
+   - Go to **Settings** > **Devices & Services**
    - Click **Add Integration**
    - Search for "Amazon Parent Dashboard"
    - Enter add-on URL (default: `http://localhost:8100`)
 
+---
+
 ## Configuration
 
-The integration uses the authentication add-on for cookie management. No manual configuration of cookies is required.
+### Environment Variables (Docker Compose)
 
-### Add-on Configuration Options
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AMAZON_EMAIL` | *(empty)* | Amazon account email for auto re-login |
+| `AMAZON_PASSWORD` | *(empty)* | Amazon account password for auto re-login |
+| `LOG_LEVEL` | `info` | Logging level (debug, info, warning, error) |
+| `AUTH_TIMEOUT` | `300` | Timeout for manual authentication in seconds |
+| `SESSION_DURATION` | `86400` | Session duration in seconds |
+| `KEEPALIVE_INTERVAL` | `2700` | Heartbeat interval in seconds (default: 45 min) |
+
+### Add-on Configuration Options (Supervisor)
 
 - **log_level**: Set logging level (trace, debug, info, warning, error)
 - **auth_timeout**: Timeout for authentication in seconds (60-600)
 - **session_duration**: How long cookies remain valid (3600-604800 seconds)
+
+For Supervisor, set `AMAZON_EMAIL`, `AMAZON_PASSWORD`, and `KEEPALIVE_INTERVAL` as environment variables in the add-on configuration.
+
+---
+
+## Session Keep-Alive & Auto Re-Login
+
+### How it works
+
+1. **Heartbeat loop** — Every 45 minutes (configurable), the sidecar loads stored cookies and hits Amazon's `get-household` API endpoint
+2. **Session alive** (HTTP 200) — Cookies are valid. If Amazon rotated any cookies via `Set-Cookie` headers, the updated values are saved automatically
+3. **Session expired** (HTTP 401/403) — If `AMAZON_EMAIL` and `AMAZON_PASSWORD` are set, the sidecar launches a headless Chromium browser and attempts automatic re-login
+4. **2FA/CAPTCHA detected** — Auto re-login cannot solve these. The sidecar logs a warning and you'll need to re-authenticate manually via VNC
+5. **No credentials** — Without credentials, session expiry requires manual VNC re-authentication. The HA integration will show a persistent notification
+
+### Monitoring
+
+The Web UI at `http://localhost:8100` shows:
+- Current session status (Healthy / Unhealthy / Unknown)
+- Last and next heartbeat times
+- Whether auto re-login is configured
+- A button to trigger an immediate heartbeat
+
+API endpoints:
+- `GET /api/keepalive/status` — JSON with session health, heartbeat times, failure count
+- `POST /api/keepalive/trigger` — Manually trigger a heartbeat
+- `GET /api/auth/mode` — Whether auto-login is available or manual-only
+- `GET /api/health` — Overall health including `session_valid` and `last_heartbeat`
+
+---
 
 ## Usage Examples
 
@@ -147,151 +268,150 @@ entities:
   - button.child_name_pause_1_hour
 ```
 
+---
+
 ## Architecture
 
-### Authentication Flow
+### Data Flow
 
-1. Add-on runs Playwright in headless browser
-2. User authenticates via VNC-accessible browser
-3. Add-on extracts cookies and CSRF tokens
-4. Integration retrieves cookies from add-on API
-5. Integration uses cookies for Amazon API calls
+```
+User (VNC) --> Auth Sidecar (Playwright browser) --> Amazon login --> cookies saved encrypted
+                    |
+                    +--> Keep-alive loop (every 45 min) --> Amazon API heartbeat
+                    |       |
+                    |       +--> Session expired? --> Auto re-login (headless)
+                    |
+HA Integration --> Auth Sidecar API (/api/cookies) --> cookies --> Amazon Parent Dashboard API
+```
 
-### API Endpoints
+### Amazon API Endpoints
 
-The integration communicates with Amazon Parent Dashboard API endpoints:
+The integration communicates with Amazon Parent Dashboard API:
 
-- `GET /get-household` - Fetch family members
-- `GET /get-child-devices` - Fetch devices per child
-- `GET /get-adjusted-time-limits` - Fetch schedules and limits
-- `POST /set-offscreen-time` - Pause/resume time limits
+- `GET /get-household` — Fetch family members
+- `GET /get-child-devices` — Fetch devices per child
+- `GET /get-adjusted-time-limits` — Fetch schedules and limits
+- `POST /set-offscreen-time` — Pause/resume time limits
 
-### Add-on API Endpoints
+### Auth Sidecar API Endpoints
 
-The authentication add-on provides:
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Health check with session status |
+| `/api/cookies/check` | GET | Check if cookies exist |
+| `/api/cookies` | GET | Retrieve stored cookies |
+| `/api/cookies` | DELETE | Delete stored cookies |
+| `/api/auth/start` | POST | Start VNC authentication flow |
+| `/api/auth/status/{id}` | GET | Check auth session status |
+| `/api/auth/mode` | GET | Auto-login available or manual-only |
+| `/api/keepalive/status` | GET | Keep-alive heartbeat status |
+| `/api/keepalive/trigger` | POST | Manually trigger a heartbeat |
 
-- `GET /api/health` - Health check
-- `GET /api/cookies/check` - Verify cookies exist
-- `GET /api/cookies` - Retrieve stored cookies
-- `POST /auth/start` - Start authentication process
+---
 
 ## Troubleshooting
 
 ### Integration won't load
 
-1. Verify add-on is running: `http://localhost:8100/api/health`
-2. Check cookies exist: `http://localhost:8100/api/cookies/check`
+1. Verify sidecar is running: `curl http://localhost:8100/api/health`
+2. Check cookies exist: `curl http://localhost:8100/api/cookies/check`
 3. Review Home Assistant logs for errors
-4. Restart both add-on and Home Assistant
+4. Restart both sidecar and Home Assistant
 
 ### Authentication fails
 
-1. Ensure VNC connection works: `vnc://[YOUR_HA_IP]:5903`
-2. Check add-on logs for errors
-3. Try increasing `auth_timeout` in add-on configuration
+1. Ensure VNC connection works at port 5903
+2. Check sidecar logs: `docker logs amazonparent-auth`
+3. Try increasing `AUTH_TIMEOUT`
 4. Verify Amazon credentials are correct
+
+### Session keeps expiring
+
+1. Check keep-alive status: `curl http://localhost:8100/api/keepalive/status`
+2. Verify `KEEPALIVE_INTERVAL` is set (default 2700s = 45 min)
+3. If auto re-login fails, check logs for 2FA/CAPTCHA messages
+4. Manually trigger a heartbeat: `curl -X POST http://localhost:8100/api/keepalive/trigger`
+5. Set `AMAZON_EMAIL` and `AMAZON_PASSWORD` to enable auto re-login
 
 ### Entities not updating
 
 - Integration polls every 60 seconds
 - Force update: Reload integration in UI
 - Check network connectivity to Amazon
-- Verify cookies haven't expired
+- Verify cookies haven't expired (check `/api/keepalive/status`)
 
-### Commands not working
+### Docker Compose issues
 
-- Verify CSRF token is present in cookies
-- Re-authenticate via add-on if needed
-- Check Amazon account has proper parental control permissions
-- Review integration logs for API errors
+- **Build fails**: Ensure Docker has at least 4GB memory available (Playwright/Chromium is large)
+- **Sidecar unhealthy**: Check `docker logs amazonparent-auth` for startup errors
+- **HA can't reach sidecar**: Use `http://amazonparent-auth:8100` as the add-on URL (Docker service name)
+- **VNC won't connect**: Ensure port 5903 is mapped and not firewalled
+
+---
 
 ## Project Structure
 
 ```
 HAamazonparent/
-├── README.md                          # This file
-├── addon/                             # Authentication Add-on
-│   ├── config.json                    # Add-on configuration
-│   ├── Dockerfile                     # Container definition
-│   ├── README.md                      # Add-on documentation
-│   ├── requirements.txt               # Python dependencies
-│   ├── app/                           # Application code
-│   └── rootfs/                        # Container filesystem
+├── README.md
+├── docker-compose.yaml               # Standalone Docker deployment
+├── .env.example                       # Credential template
+├── addon/                             # Authentication Sidecar
+│   ├── Dockerfile
+│   ├── config.json                    # HA add-on configuration
+│   ├── requirements.txt
+│   ├── app/
+│   │   ├── main.py                    # FastAPI app + Web UI
+│   │   ├── config.py                  # Configuration (env vars)
+│   │   ├── auth/
+│   │   │   └── browser.py            # BrowserAuthManager + KeepAliveManager
+│   │   └── storage/
+│   │       └── file_storage.py        # Encrypted cookie storage
+│   └── rootfs/                        # Container filesystem (s6-overlay)
 └── custom_components/amazonparent/    # Home Assistant Integration
     ├── __init__.py                    # Integration setup
-    ├── manifest.json                  # Integration metadata
-    ├── config_flow.py                 # Configuration UI
-    ├── coordinator.py                 # Data update coordinator
-    ├── const.py                       # Constants
-    ├── models.py                      # Data models
-    ├── sensor.py                      # Sensor entities
-    ├── switch.py                      # Switch entities
-    ├── button.py                      # Button entities
-    ├── strings.json                   # UI translations
-    ├── client/                        # API client
-    │   └── api.py                     # Amazon API wrapper
-    └── translations/                  # Localization files
+    ├── manifest.json
+    ├── config_flow.py
+    ├── coordinator.py                 # Data coordinator with auth retry
+    ├── const.py
+    ├── models.py
+    ├── exceptions.py                  # Exception hierarchy
+    ├── sensor.py
+    ├── switch.py
+    ├── button.py
+    ├── auth/
+    │   └── addon_client.py            # HTTP-only cookie client
+    ├── client/
+    │   └── api.py                     # Amazon API client
+    └── translations/
 ```
+
+---
 
 ## Known Limitations
 
 1. **Child-centric control**: API controls all of a child's devices together (not per-device)
 2. **Polling only**: No real-time push updates (60-second refresh interval)
-3. **Unofficial API**: Uses reverse-engineered Amazon endpoints
-4. **Browser authentication**: Requires manual login via VNC for initial setup
-5. **Session expiry**: Cookies may expire; requires re-authentication
-
-## Development
-
-### Testing
-
-The integration has been tested with:
-- Authentication via Playwright add-on
-- Cookie retrieval and CSRF token extraction
-- Household and device data fetching
-- Pause/resume limit functionality
-- Multi-child household support
-
-### Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+3. **Unofficial API**: Uses reverse-engineered Amazon endpoints that may change
+4. **2FA/CAPTCHA**: Auto re-login cannot solve these — requires one-time manual VNC auth
+5. **Single region**: Hardcoded to `amazon.com` (US)
 
 ## Security Considerations
 
 This integration is designed for home use on **trusted local networks**:
 
-- 🏠 **Local Network Only**: Runs on your local network (not internet-exposed)
-- 🔐 **Encrypted Storage**: Amazon session cookies are encrypted before storage
-- 👁️ **VNC Access**: VNC password (`amazonparent`) allows viewing the browser during authentication
-- 🔒 **Isolated Container**: Add-on runs in isolated Docker container
-- ⚠️ **No Internet Exposure**: Do NOT expose Home Assistant directly to the internet
-- ✅ **Remote Access**: Use a VPN (WireGuard, Tailscale) for remote access instead of port forwarding
-
-**Important**: No credentials are stored permanently (session cookies only).
+- **Encrypted Storage**: Amazon session cookies are encrypted at rest with Fernet
+- **Credentials in env vars**: `AMAZON_EMAIL`/`AMAZON_PASSWORD` are passed via environment variables, never written to disk. Use `.env` (gitignored) or Docker secrets
+- **VNC Access**: VNC password (`amazonparent`) is for local use only — do not expose port 5903 to the internet
+- **Isolated Container**: Sidecar runs in its own Docker container
+- **No Internet Exposure**: Do NOT expose ports 8100 or 5903 to the internet. Use a VPN (WireGuard, Tailscale) for remote access
 
 For detailed security information, see [SECURITY.md](SECURITY.md).
-
-## Roadmap
-
-### Future Enhancements
-
-- Binary sensors (bedtime active, limits reached, device online status)
-- Time limit modification services
-- Schedule update services
-- App blocking controls
-- Real-time usage tracking
-- HACS integration
-- Multi-language support
 
 ## Support
 
 - **Issues**: https://github.com/ricslash/HAamazonparent/issues
 - **Discussions**: https://github.com/ricslash/HAamazonparent/discussions
-- **Documentation**: https://github.com/ricslash/HAamazonparent
 
 ## License
 
@@ -302,7 +422,3 @@ MIT License
 **Important**: This integration uses unofficial, reverse-engineered Amazon API endpoints. Use at your own risk. This may violate Amazon's Terms of Service and could result in account restrictions. The authors are not responsible for any issues arising from the use of this integration.
 
 This project is not affiliated with, endorsed by, or sponsored by Amazon.com, Inc. or its affiliates.
-
----
-
-**Made with Home Assistant** | Phase 2 Complete

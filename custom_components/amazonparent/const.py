@@ -3,6 +3,7 @@ from datetime import timedelta
 
 # Integration domain
 DOMAIN = "amazonparent"
+LOGGER_NAME = "amazonparent"
 
 # Configuration
 CONF_ADDON_URL = "addon_url"

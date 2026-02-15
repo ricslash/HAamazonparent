@@ -15,10 +15,17 @@ export LOG_LEVEL="${LOG_LEVEL}"
 export AUTH_TIMEOUT="${AUTH_TIMEOUT}"
 export SESSION_DURATION="${SESSION_DURATION}"
 
+# Export credential and keep-alive environment variables (if set)
+export AMAZON_EMAIL="${AMAZON_EMAIL:-}"
+export AMAZON_PASSWORD="${AMAZON_PASSWORD:-}"
+export KEEPALIVE_INTERVAL="${KEEPALIVE_INTERVAL:-2700}"
+
 bashio::log.info "Configuration loaded:"
 bashio::log.info "  - Log Level: ${LOG_LEVEL}"
 bashio::log.info "  - Auth Timeout: ${AUTH_TIMEOUT}s"
 bashio::log.info "  - Session Duration: ${SESSION_DURATION}s"
+bashio::log.info "  - Keep-Alive Interval: ${KEEPALIVE_INTERVAL}s"
+bashio::log.info "  - Auto Re-Login: $([ -n "${AMAZON_EMAIL}" ] && echo 'configured' || echo 'not configured')"
 
 # Ensure shared directory exists
 mkdir -p /share/amazonparent

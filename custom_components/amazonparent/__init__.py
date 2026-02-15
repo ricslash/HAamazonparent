@@ -1,18 +1,20 @@
 """The Amazon Parent Dashboard integration."""
-import logging
+from __future__ import annotations
 
-import aiohttp
+import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
+from .auth.addon_client import AddonCookieClient
 from .client.api import AmazonParentAPIClient
-from .const import CONF_ADDON_URL, DOMAIN
+from .const import CONF_ADDON_URL, DOMAIN, LOGGER_NAME
 from .coordinator import AmazonParentDataUpdateCoordinator
+from .exceptions import AmazonParentException, AuthenticationError
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = logging.getLogger(LOGGER_NAME)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BUTTON]
 
@@ -22,28 +24,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     addon_url = entry.data[CONF_ADDON_URL]
 
     try:
-        # Fetch cookies from add-on
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{addon_url}/api/cookies",
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                if resp.status != 200:
-                    raise ConfigEntryNotReady(
-                        f"Failed to fetch cookies from add-on: {resp.status}"
-                    )
+        # Create addon cookie client for retrieving cookies
+        addon_client = AddonCookieClient(hass, auth_url=addon_url)
 
-                data = await resp.json()
-                cookies = data.get("cookies", [])
+        # Check if cookies are available
+        if not await addon_client.cookies_available():
+            raise ConfigEntryNotReady(
+                "No cookies found. Please use the Amazon Parent Auth add-on to authenticate first."
+            )
 
-                if not cookies:
-                    raise ConfigEntryNotReady("No cookies found in add-on")
+        # Load initial cookies
+        cookies = await addon_client.load_cookies()
+        if not cookies:
+            raise ConfigEntryNotReady("Failed to load cookies from add-on")
 
-        # Create API client
-        api_client = AmazonParentAPIClient(cookies)
+        _LOGGER.debug(f"Loaded {len(cookies)} cookies from add-on at {addon_url}")
 
-        # Create coordinator
-        coordinator = AmazonParentDataUpdateCoordinator(hass, api_client)
+        # Create API client with addon_client for future cookie refreshes
+        api_client = AmazonParentAPIClient(
+            hass=hass,
+            addon_client=addon_client,
+            initial_cookies=cookies,
+        )
+
+        # Verify CSRF token is available
+        if not api_client.is_authenticated():
+            raise ConfigEntryNotReady(
+                "CSRF token not found in cookies. Please re-authenticate via add-on."
+            )
+
+        # Create coordinator with addon_url for refresh capability
+        coordinator = AmazonParentDataUpdateCoordinator(
+            hass=hass,
+            api_client=api_client,
+            addon_url=addon_url,
+        )
 
         # Fetch initial data
         await coordinator.async_config_entry_first_refresh()
@@ -63,11 +78,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         return True
 
-    except aiohttp.ClientError as err:
-        raise ConfigEntryNotReady(f"Cannot connect to add-on: {err}")
+    except AuthenticationError as err:
+        raise ConfigEntryNotReady(f"Authentication failed: {err}") from err
+    except AmazonParentException as err:
+        raise ConfigEntryNotReady(f"Setup failed: {err}") from err
     except Exception as err:
         _LOGGER.exception("Error setting up Amazon Parent Dashboard")
-        raise ConfigEntryNotReady(f"Setup failed: {err}")
+        raise ConfigEntryNotReady(f"Setup failed: {err}") from err
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -78,6 +95,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         # Clean up coordinator
         coordinator: AmazonParentDataUpdateCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
-        await coordinator.api_client.close()
+        await coordinator.async_cleanup()
 
     return unload_ok

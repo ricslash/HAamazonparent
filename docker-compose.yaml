@@ -1,0 +1,39 @@
+services:
+  homeassistant:
+    container_name: homeassistant
+    image: ghcr.io/home-assistant/home-assistant:stable
+    volumes:
+      - ./ha-config:/config
+      - /etc/localtime:/etc/localtime:ro
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      amazonparent-auth:
+        condition: service_healthy
+
+  amazonparent-auth:
+    build: ./addon
+    container_name: amazonparent-auth
+    ports:
+      - "8100:8100"
+      - "5903:5903"
+    environment:
+      - AMAZON_EMAIL=${AMAZON_EMAIL}
+      - AMAZON_PASSWORD=${AMAZON_PASSWORD}
+      - LOG_LEVEL=info
+      - AUTH_TIMEOUT=300
+      - SESSION_DURATION=86400
+      - KEEPALIVE_INTERVAL=2700
+    volumes:
+      - amazonparent-data:/share/amazonparent
+    shm_size: '2gb'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+volumes:
+  amazonparent-data:

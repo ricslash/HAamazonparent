@@ -44,8 +44,10 @@ async def validate_cookies(hass: HomeAssistant, addon_url: str) -> dict[str, Any
                 if not csrf_token:
                     raise InvalidAuth("CSRF token missing - please re-authenticate via add-on")
 
-                # Try to use cookies to fetch household (validates authentication)
-                client = AmazonParentAPIClient(cookies)
+                # Validate that cookies work by making a test API call
+                from .auth.addon_client import AddonCookieClient
+                addon_client = AddonCookieClient(hass, auth_url=addon_url)
+                client = AmazonParentAPIClient(hass, addon_client, initial_cookies=cookies)
                 try:
                     members = await client.async_get_household()
                     children = [m for m in members if m.is_child]
