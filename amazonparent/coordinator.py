@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import aiohttp
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -25,6 +27,7 @@ class AmazonParentDataUpdateCoordinator(DataUpdateCoordinator):
         hass: HomeAssistant,
         api_client: AmazonParentAPIClient,
         addon_url: str,
+        entry_id: str = "",
     ) -> None:
         """Initialize the coordinator.
 
@@ -32,6 +35,7 @@ class AmazonParentDataUpdateCoordinator(DataUpdateCoordinator):
             hass: Home Assistant instance
             api_client: API client for Amazon Parent Dashboard
             addon_url: URL of the auth add-on for cookie refresh
+            entry_id: Config entry ID for triggering reload
         """
         super().__init__(
             hass,
@@ -41,16 +45,52 @@ class AmazonParentDataUpdateCoordinator(DataUpdateCoordinator):
         )
         self.api_client = api_client
         self._addon_url = addon_url
+        self._entry_id = entry_id
         self._is_retrying_auth = False  # Prevent infinite retry loops
         self._auth_notification_sent = False  # Only send auth notification once
+        self._last_known_cookie_update: str | None = None  # Track addon cookie freshness
 
         # Data storage
         self.household_members: list[HouseholdMember] = []
         self.devices: list[Device] = []
         self.child_schedules: dict[str, ChildSchedule] = {}
 
+    async def _async_check_cookie_freshness(self) -> None:
+        """Check if the addon has newer cookies and trigger a full reload if so."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self._addon_url}/api/cookies/info",
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as resp:
+                    if resp.status != 200:
+                        return
+                    data = await resp.json()
+                    last_updated = data.get("last_updated")
+                    if not last_updated:
+                        return
+                    if self._last_known_cookie_update != last_updated:
+                        if self._last_known_cookie_update is not None:
+                            _LOGGER.info(
+                                "Addon cookies updated (%s → %s), reloading integration",
+                                self._last_known_cookie_update,
+                                last_updated,
+                            )
+                            self._last_known_cookie_update = last_updated
+                            # Schedule reload in background so this poll cycle exits cleanly
+                            self.hass.async_create_task(
+                                self.hass.config_entries.async_reload(self._entry_id)
+                            )
+                            return
+                        self._last_known_cookie_update = last_updated
+        except Exception as err:
+            _LOGGER.debug("Cookie freshness check failed: %s", err)
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
+        # Proactively pick up fresh cookies from addon before polling
+        await self._async_check_cookie_freshness()
+
         try:
             result = await self._async_fetch_data()
             # Reset notification flag on successful fetch
@@ -193,13 +233,23 @@ class AmazonParentDataUpdateCoordinator(DataUpdateCoordinator):
     ) -> None:
         """Pause limits for a child."""
         duration_seconds = duration_minutes * 60
-        await self.api_client.async_pause_limits([child_id], duration_seconds)
+        try:
+            await self.api_client.async_pause_limits([child_id], duration_seconds)
+        except SessionExpiredError:
+            _LOGGER.warning("Session expired during pause, refreshing and retrying")
+            await self._async_refresh_auth()
+            await self.api_client.async_pause_limits([child_id], duration_seconds)
         # Refresh data after action
         await self.async_request_refresh()
 
     async def async_resume_limits(self, child_id: str) -> None:
         """Resume limits for a child."""
-        await self.api_client.async_resume_limits([child_id])
+        try:
+            await self.api_client.async_resume_limits([child_id])
+        except SessionExpiredError:
+            _LOGGER.warning("Session expired during resume, refreshing and retrying")
+            await self._async_refresh_auth()
+            await self.api_client.async_resume_limits([child_id])
         # Refresh data after action
         await self.async_request_refresh()
 

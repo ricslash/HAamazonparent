@@ -1,6 +1,6 @@
 {
   "name": "Amazon Parent Dashboard Auth",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "slug": "amazonparent_auth",
   "description": "Authentication service for Amazon Parent Dashboard integration",
   "arch": [
@@ -23,12 +23,18 @@
   "options": {
     "log_level": "info",
     "auth_timeout": 300,
-    "session_duration": 86400
+    "session_duration": 86400,
+    "reauth_interval": 72000,
+    "health_check_interval": 14400,
+    "reauth_max_retries": 3
   },
   "schema": {
     "log_level": "list(trace|debug|info|warning|error)?",
     "auth_timeout": "int(60,600)?",
-    "session_duration": "int(3600,604800)?"
+    "session_duration": "int(3600,604800)?",
+    "reauth_interval": "int(3600,172800)?",
+    "health_check_interval": "int(1800,86400)?",
+    "reauth_max_retries": "int(1,10)?"
   },
   "build_from": {
     "amd64": "ghcr.io/hassio-addons/debian-base:7.3.3",

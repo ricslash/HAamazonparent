@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from auth.browser import BrowserAuthManager, KeepAliveManager
+from auth.browser import BrowserAuthManager, ScheduledReauthManager
 from storage.file_storage import SharedStorage
 from config import get_config
 
@@ -27,7 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 app = FastAPI(
     title="Amazon Parent Dashboard Auth Service",
     description="Authentication service for Amazon Parent Dashboard integration",
-    version="1.1.0"
+    version="2.0.0"
 )
 
 # CORS configuration
@@ -42,29 +42,34 @@ app.add_middleware(
 # Global instances
 storage = SharedStorage(config.share_dir)
 browser_manager = None
-keepalive_manager = None
+reauth_manager = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
-    global browser_manager, keepalive_manager
-    _LOGGER.info("Starting Amazon Parent Dashboard Auth Service v1.1.0")
-    _LOGGER.info(f"Configuration: log_level={config.log_level}, auth_timeout={config.auth_timeout}s, keepalive_interval={config.keepalive_interval}s")
+    global browser_manager, reauth_manager
+    _LOGGER.info("Starting Amazon Parent Dashboard Auth Service v2.0.0")
+    _LOGGER.info(
+        f"Configuration: log_level={config.log_level}, auth_timeout={config.auth_timeout}s, "
+        f"reauth_interval={config.reauth_interval}s, health_check_interval={config.health_check_interval}s"
+    )
 
     try:
         browser_manager = BrowserAuthManager(auth_timeout=config.auth_timeout)
         await browser_manager.initialize()
 
-        # Start keep-alive manager
-        keepalive_manager = KeepAliveManager(
+        # Start scheduled reauth manager
+        reauth_manager = ScheduledReauthManager(
             storage=storage,
-            interval=config.keepalive_interval,
+            browser_auth_manager=browser_manager,
+            reauth_interval=config.reauth_interval,
+            health_check_interval=config.health_check_interval,
+            max_retries=config.reauth_max_retries,
             amazon_email=config.amazon_email,
             amazon_password=config.amazon_password,
-            browser_auth_manager=browser_manager,
         )
-        keepalive_manager.start()
+        reauth_manager.start()
 
         _LOGGER.info("Service started successfully")
     except Exception as e:
@@ -76,8 +81,8 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown."""
     _LOGGER.info("Shutting down Amazon Parent Dashboard Auth Service")
-    if keepalive_manager:
-        await keepalive_manager.stop()
+    if reauth_manager:
+        await reauth_manager.stop()
     if browser_manager:
         await browser_manager.cleanup()
 
@@ -86,7 +91,8 @@ async def shutdown_event():
 async def index():
     """Serve the main authentication interface."""
     credentials_configured = bool(config.amazon_email and config.amazon_password)
-    keepalive_interval_min = config.keepalive_interval // 60
+    reauth_interval_hours = round(config.reauth_interval / 3600, 1)
+    health_check_hours = round(config.health_check_interval / 3600, 1)
 
     html_content = f"""
 <!DOCTYPE html>
@@ -253,7 +259,7 @@ async def index():
             color: #856404;
         }}
 
-        .keepalive-panel {{
+        .reauth-panel {{
             background: #f8f9fa;
             border-radius: 8px;
             padding: 20px;
@@ -261,7 +267,7 @@ async def index():
             border: 1px solid #e9ecef;
         }}
 
-        .keepalive-panel .stat {{
+        .reauth-panel .stat {{
             display: flex;
             justify-content: space-between;
             padding: 8px 0;
@@ -269,17 +275,27 @@ async def index():
             font-size: 14px;
         }}
 
-        .keepalive-panel .stat:last-child {{
+        .reauth-panel .stat:last-child {{
             border-bottom: none;
         }}
 
-        .keepalive-panel .stat .label {{
+        .reauth-panel .stat .label {{
             color: #666;
         }}
 
-        .keepalive-panel .stat .value {{
+        .reauth-panel .stat .value {{
             color: #333;
             font-weight: 600;
+        }}
+
+        .button-row {{
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }}
+
+        .button-row button {{
+            flex: 1;
         }}
 
         .badge {{
@@ -314,6 +330,21 @@ async def index():
             background: #e2e3e5;
             color: #383d41;
         }}
+
+        .badge.success {{
+            background: #d4edda;
+            color: #155724;
+        }}
+
+        .badge.failed {{
+            background: #f8d7da;
+            color: #721c24;
+        }}
+
+        .badge.never {{
+            background: #e2e3e5;
+            color: #383d41;
+        }}
     </style>
 </head>
 <body>
@@ -324,42 +355,53 @@ async def index():
         <div id="status" class="status"></div>
 
         <button id="authButton" onclick="startAuth()">
-            Start Authentication
+            Start Authentication (VNC)
         </button>
 
-        <h2>Session Keep-Alive</h2>
-        <div class="keepalive-panel" id="keepalivePanel">
+        <h2>Daily Re-Authentication</h2>
+        <div class="reauth-panel" id="reauthPanel">
             <div class="stat">
                 <span class="label">Session Status</span>
                 <span class="value" id="sessionStatus"><span class="badge unknown">Checking...</span></span>
             </div>
             <div class="stat">
-                <span class="label">Last Heartbeat</span>
-                <span class="value" id="lastHeartbeat">--</span>
+                <span class="label">Last Reauth</span>
+                <span class="value" id="lastReauth">--</span>
             </div>
             <div class="stat">
-                <span class="label">Next Heartbeat</span>
-                <span class="value" id="nextHeartbeat">--</span>
+                <span class="label">Last Result</span>
+                <span class="value" id="lastResult"><span class="badge never">Never</span></span>
             </div>
             <div class="stat">
-                <span class="label">Heartbeat Interval</span>
-                <span class="value">{keepalive_interval_min} min</span>
+                <span class="label">Next Reauth</span>
+                <span class="value" id="nextReauth">--</span>
             </div>
             <div class="stat">
-                <span class="label">Auto Re-Login</span>
+                <span class="label">Last Health Check</span>
+                <span class="value" id="lastHealthCheck">--</span>
+            </div>
+            <div class="stat">
+                <span class="label">Reauth Interval</span>
+                <span class="value">~{reauth_interval_hours}h (health check every {health_check_hours}h)</span>
+            </div>
+            <div class="stat">
+                <span class="label">Credentials</span>
                 <span class="value">
                     <span class="badge {'configured' if credentials_configured else 'not-configured'}">
                         {'Configured' if credentials_configured else 'Not Configured'}
                     </span>
                 </span>
             </div>
-            <button class="secondary" onclick="triggerHeartbeat()">Trigger Heartbeat Now</button>
+            <div class="button-row">
+                <button class="secondary" onclick="triggerReauth()">Trigger Reauth Now</button>
+                <button class="secondary" onclick="triggerHealthCheck()">Health Check</button>
+            </div>
         </div>
 
         <div class="instructions">
             <h3>Instructions</h3>
             <ol>
-                <li>Click "Start Authentication"</li>
+                <li>Click "Start Authentication (VNC)" for initial login</li>
                 <li>A browser window will open with Amazon login page</li>
                 <li>Connect via VNC (port 5903) to see the browser</li>
                 <li>Sign in with your Amazon account</li>
@@ -370,8 +412,9 @@ async def index():
         </div>
 
         <div class="info-box">
-            <strong>Note:</strong> The keep-alive system sends periodic heartbeats to Amazon every {keepalive_interval_min} minutes to prevent session expiry.
-            {'Auto re-login is configured and will attempt to re-authenticate if the session expires.' if credentials_configured else 'Set AMAZON_EMAIL and AMAZON_PASSWORD environment variables to enable auto re-login.'}
+            <strong>Note:</strong> The system automatically re-authenticates every ~{reauth_interval_hours} hours using a full browser login to keep cookies fresh.
+            Health checks run every {health_check_hours} hours and trigger an immediate reauth if cookies have expired.
+            {'Credentials are configured - automatic re-authentication is active.' if credentials_configured else 'Set AMAZON_EMAIL and AMAZON_PASSWORD environment variables to enable automatic re-authentication.'}
         </div>
     </div>
 
@@ -432,7 +475,7 @@ async def index():
                     const button = document.getElementById('authButton');
                     button.innerHTML = 'Authentication Complete';
                     button.style.background = '#28a745';
-                    refreshKeepaliveStatus();
+                    refreshReauthStatus();
 
                 }} else if (data.status === 'timeout') {{
                     clearInterval(statusCheckInterval);
@@ -456,46 +499,82 @@ async def index():
             }}
         }}
 
-        async function triggerHeartbeat() {{
+        async function triggerReauth() {{
             try {{
-                showStatus("Triggering heartbeat...", "info");
-                const response = await fetch('/api/keepalive/trigger', {{ method: 'POST' }});
+                showStatus("Triggering re-authentication (this may take up to 2 minutes)...", "info");
+                const response = await fetch('/api/reauth/trigger', {{ method: 'POST' }});
                 const data = await response.json();
 
-                if (data.result && data.result.status === 'healthy') {{
-                    showStatus("Heartbeat successful - session is alive!", "success");
-                }} else if (data.result && data.result.status === 're_authenticated') {{
-                    showStatus("Session was expired but auto re-login succeeded!", "success");
+                if (data.result && data.result.status === 'success') {{
+                    showStatus("Re-authentication successful! Fresh cookies saved.", "success");
+                }} else if (data.result && data.result.status === 'already_running') {{
+                    showStatus("A re-authentication is already in progress.", "info");
+                }} else if (data.result && data.result.status === 'error') {{
+                    showStatus("Reauth error: " + (data.result.error || "Unknown"), "error");
                 }} else {{
-                    showStatus("Heartbeat result: " + JSON.stringify(data.result), "error");
+                    showStatus("Reauth result: " + JSON.stringify(data.result), "error");
                 }}
-                refreshKeepaliveStatus();
+                refreshReauthStatus();
             }} catch (error) {{
-                showStatus("Failed to trigger heartbeat: " + error.message, "error");
+                showStatus("Failed to trigger reauth: " + error.message, "error");
             }}
         }}
 
-        async function refreshKeepaliveStatus() {{
+        async function triggerHealthCheck() {{
             try {{
-                const response = await fetch('/api/keepalive/status');
+                showStatus("Running health check...", "info");
+                const response = await fetch('/api/reauth/health-check', {{ method: 'POST' }});
+                const data = await response.json();
+
+                if (data.result && data.result.status === 'healthy') {{
+                    showStatus("Health check passed - session is healthy!", "success");
+                }} else if (data.result && data.result.status === 'expired') {{
+                    showStatus("Health check: session expired (HTTP " + data.result.http_status + "). Reauth recommended.", "error");
+                }} else if (data.result && data.result.status === 'no_cookies') {{
+                    showStatus("Health check: no cookies stored. Please authenticate first.", "error");
+                }} else {{
+                    showStatus("Health check result: " + JSON.stringify(data.result), "info");
+                }}
+                refreshReauthStatus();
+            }} catch (error) {{
+                showStatus("Failed to run health check: " + error.message, "error");
+            }}
+        }}
+
+        async function refreshReauthStatus() {{
+            try {{
+                const response = await fetch('/api/reauth/status');
                 const data = await response.json();
 
                 const statusEl = document.getElementById('sessionStatus');
                 if (data.session_healthy) {{
                     statusEl.innerHTML = '<span class="badge healthy">Healthy</span>';
-                }} else if (data.last_heartbeat) {{
+                }} else if (data.last_health_check) {{
                     statusEl.innerHTML = '<span class="badge unhealthy">Unhealthy</span>';
                 }} else {{
                     statusEl.innerHTML = '<span class="badge unknown">Unknown</span>';
                 }}
 
-                document.getElementById('lastHeartbeat').textContent =
-                    data.last_heartbeat ? new Date(data.last_heartbeat).toLocaleString() : '--';
-                document.getElementById('nextHeartbeat').textContent =
-                    data.next_heartbeat ? new Date(data.next_heartbeat).toLocaleString() : '--';
+                document.getElementById('lastReauth').textContent =
+                    data.last_reauth ? new Date(data.last_reauth).toLocaleString() : '--';
+
+                const resultEl = document.getElementById('lastResult');
+                if (data.last_reauth_result === 'success') {{
+                    resultEl.innerHTML = '<span class="badge success">Success</span>';
+                }} else if (data.last_reauth_result === 'failed') {{
+                    resultEl.innerHTML = '<span class="badge failed">Failed</span>';
+                }} else {{
+                    resultEl.innerHTML = '<span class="badge never">Never</span>';
+                }}
+
+                document.getElementById('nextReauth').textContent =
+                    data.next_reauth ? new Date(data.next_reauth).toLocaleString() : '--';
+
+                document.getElementById('lastHealthCheck').textContent =
+                    data.last_health_check ? new Date(data.last_health_check).toLocaleString() : '--';
 
             }} catch (error) {{
-                console.error('Failed to refresh keepalive status:', error);
+                console.error('Failed to refresh reauth status:', error);
             }}
         }}
 
@@ -519,9 +598,9 @@ async def index():
                 // Ignore errors on initial check
             }}
 
-            refreshKeepaliveStatus();
-            // Refresh keepalive status every 30 seconds
-            setInterval(refreshKeepaliveStatus, 30000);
+            refreshReauthStatus();
+            // Refresh reauth status every 30 seconds
+            setInterval(refreshReauthStatus, 30000);
         }});
     </script>
 </body>
@@ -536,14 +615,15 @@ async def health_check():
     status_data = {
         "status": "healthy",
         "service": "amazonparent-auth",
-        "version": "1.1.0",
+        "version": "2.0.0",
         "credentials_configured": bool(config.amazon_email and config.amazon_password),
     }
 
-    if keepalive_manager:
-        ka_status = keepalive_manager.get_status()
-        status_data["session_valid"] = ka_status["session_healthy"]
-        status_data["last_heartbeat"] = ka_status["last_heartbeat"]
+    if reauth_manager:
+        ra_status = reauth_manager.get_status()
+        status_data["session_valid"] = ra_status["session_healthy"]
+        status_data["last_reauth"] = ra_status["last_reauth"]
+        status_data["next_reauth"] = ra_status["next_reauth"]
 
     return status_data
 
@@ -615,20 +695,59 @@ async def delete_cookies():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/cookies/info")
+async def cookies_info():
+    """Return cookie metadata without decrypting (cheap check for integration polling)."""
+    exists = await storage.check_exists()
+    last_reauth = None
+    if reauth_manager:
+        status = reauth_manager.get_status()
+        last_reauth = status.get("last_reauth")
+    return {
+        "exists": exists,
+        "last_updated": last_reauth,
+    }
+
+
+@app.get("/api/reauth/status")
+async def reauth_status():
+    """Get scheduled re-authentication status."""
+    if not reauth_manager:
+        raise HTTPException(status_code=503, detail="Reauth manager not initialized")
+    return reauth_manager.get_status()
+
+
+@app.post("/api/reauth/trigger")
+async def reauth_trigger():
+    """Manually trigger an immediate re-authentication."""
+    if not reauth_manager:
+        raise HTTPException(status_code=503, detail="Reauth manager not initialized")
+    result = await reauth_manager.trigger_reauth()
+    return {"status": "triggered", "result": result}
+
+
+@app.post("/api/reauth/health-check")
+async def reauth_health_check():
+    """Manually trigger an immediate health check."""
+    if not reauth_manager:
+        raise HTTPException(status_code=503, detail="Reauth manager not initialized")
+    result = await reauth_manager.trigger_health_check()
+    return {"status": "checked", "result": result}
+
+
+# Keep old endpoints as aliases for backwards compatibility
 @app.get("/api/keepalive/status")
 async def keepalive_status():
-    """Get keep-alive heartbeat status."""
-    if not keepalive_manager:
-        raise HTTPException(status_code=503, detail="Keep-alive manager not initialized")
-    return keepalive_manager.get_status()
+    """Legacy endpoint - redirects to reauth status."""
+    return await reauth_status()
 
 
 @app.post("/api/keepalive/trigger")
 async def keepalive_trigger():
-    """Manually trigger a heartbeat."""
-    if not keepalive_manager:
-        raise HTTPException(status_code=503, detail="Keep-alive manager not initialized")
-    result = await keepalive_manager.trigger()
+    """Legacy endpoint - triggers health check."""
+    if not reauth_manager:
+        raise HTTPException(status_code=503, detail="Reauth manager not initialized")
+    result = await reauth_manager.trigger_health_check()
     return {"status": "triggered", "result": result}
 
 

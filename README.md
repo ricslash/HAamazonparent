@@ -1,6 +1,6 @@
 # Amazon Parent Dashboard for Home Assistant
 
-**Version**: 1.1.0
+**Version**: 2.0.0
 
 A complete Home Assistant solution for monitoring and controlling Amazon Parent Dashboard supervised devices (Fire tablets, Echo devices, Kindle devices).
 
@@ -12,7 +12,7 @@ Supports two deployment modes:
 
 This project provides two components that work together:
 
-1. **Authentication Sidecar** (`addon/`) — Browser-based authentication service using Playwright and VNC, with automatic session keep-alive and optional auto re-login
+1. **Authentication Sidecar** (`addon/`) — Browser-based authentication service using Playwright and VNC, with scheduled daily re-authentication to keep cookies fresh
 2. **Custom Integration** (`custom_components/amazonparent/`) — Home Assistant integration for device control and monitoring
 
 ## Features
@@ -31,12 +31,13 @@ This project provides two components that work together:
 - Quick pause: 30 minutes
 - Quick pause: 1 hour
 
-### Session Keep-Alive
-- Automatic heartbeat every 45 minutes (configurable) to prevent cookie expiry
-- Cookie rotation detection — updated cookies are saved automatically
-- Auto re-login with stored credentials when session expires (optional)
-- Manual heartbeat trigger via Web UI or API
-- Session health monitoring via `/api/keepalive/status`
+### Scheduled Re-Authentication
+- Automatic full browser re-login every ~20 hours (configurable, randomized ±1h) to get fresh cookies
+- Health checks every 4 hours — if cookies have expired, triggers immediate re-authentication
+- Stealth browser automation with anti-detection measures (non-headless via Xvfb, human-like typing/clicking, stealth JS injection)
+- Retry logic: up to 3 attempts with increasing backoff (5min, 15min, 30min)
+- Manual reauth trigger via Web UI or API
+- Session health monitoring via `/api/reauth/status`
 
 ---
 
@@ -62,7 +63,7 @@ AMAZON_EMAIL=your-email@example.com
 AMAZON_PASSWORD=your-password
 ```
 
-These enable automatic re-login when sessions expire. If you omit them, the system still works but you'll need to manually re-authenticate via VNC when cookies expire.
+These enable automatic re-authentication when cookies expire. If you omit them, the system still works but you'll need to manually re-authenticate via VNC when cookies expire (~24h).
 
 ### Step 2: Build and start
 
@@ -79,7 +80,7 @@ The HA container waits for the auth sidecar health check to pass before starting
 ### Step 3: Initial authentication
 
 1. Open `http://localhost:8100` in your browser
-2. Click **Start Authentication**
+2. Click **Start Authentication (VNC)**
 3. Connect to VNC at `localhost:5903` (password: `amazonparent`)
 4. Sign in to Amazon in the browser window
 5. Complete 2FA if prompted
@@ -96,22 +97,25 @@ The HA container waits for the auth sidecar health check to pass before starting
 4. Search for **Amazon Parent Dashboard**
 5. Enter add-on URL: `http://amazonparent-auth:8100`
 
-### Step 5: Verify keep-alive
+### Step 5: Verify re-authentication
 
-After initial auth, the keep-alive system starts automatically:
+After initial auth, the scheduled re-authentication system starts automatically:
 
 ```bash
-# Check session health
-curl http://localhost:8100/api/keepalive/status
+# Check reauth status (next scheduled reauth, session health, etc.)
+curl http://localhost:8100/api/reauth/status
 
-# Manually trigger a heartbeat
-curl -X POST http://localhost:8100/api/keepalive/trigger
+# Manually trigger a full browser re-authentication
+curl -X POST http://localhost:8100/api/reauth/trigger
 
-# Check overall health
+# Run an immediate health check against Amazon API
+curl -X POST http://localhost:8100/api/reauth/health-check
+
+# Check overall service health
 curl http://localhost:8100/api/health
 ```
 
-You can also monitor the keep-alive panel in the Web UI at `http://localhost:8100`.
+You can also monitor the re-authentication panel in the Web UI at `http://localhost:8100`.
 
 ---
 
@@ -138,7 +142,7 @@ You can also monitor the keep-alive panel in the Web UI at `http://localhost:810
 
    **a. Start the authentication process:**
    - Click "Open Web UI" or navigate to `http://[YOUR_HA_IP]:8100`
-   - Click "Start Authentication"
+   - Click "Start Authentication (VNC)"
 
    **b. Install a VNC client (if you don't have one):**
    - **Windows**: Download [TigerVNC](https://github.com/TigerVNC/tigervnc/releases) or [RealVNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)
@@ -181,46 +185,69 @@ You can also monitor the keep-alive panel in the Web UI at `http://localhost:810
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AMAZON_EMAIL` | *(empty)* | Amazon account email for auto re-login |
-| `AMAZON_PASSWORD` | *(empty)* | Amazon account password for auto re-login |
+| `AMAZON_EMAIL` | *(empty)* | Amazon account email for auto re-authentication |
+| `AMAZON_PASSWORD` | *(empty)* | Amazon account password for auto re-authentication |
 | `LOG_LEVEL` | `info` | Logging level (debug, info, warning, error) |
-| `AUTH_TIMEOUT` | `300` | Timeout for manual authentication in seconds |
+| `AUTH_TIMEOUT` | `300` | Timeout for manual VNC authentication in seconds |
 | `SESSION_DURATION` | `86400` | Session duration in seconds |
-| `KEEPALIVE_INTERVAL` | `2700` | Heartbeat interval in seconds (default: 45 min) |
+| `REAUTH_INTERVAL` | `72000` | Base re-authentication interval in seconds (~20h), randomized ±1h |
+| `HEALTH_CHECK_INTERVAL` | `14400` | Health check interval in seconds (4h) |
+| `REAUTH_MAX_RETRIES` | `3` | Max retry attempts on reauth failure |
 
 ### Add-on Configuration Options (Supervisor)
 
 - **log_level**: Set logging level (trace, debug, info, warning, error)
 - **auth_timeout**: Timeout for authentication in seconds (60-600)
 - **session_duration**: How long cookies remain valid (3600-604800 seconds)
+- **reauth_interval**: Re-authentication interval in seconds (3600-172800)
+- **health_check_interval**: Health check interval in seconds (1800-86400)
+- **reauth_max_retries**: Max retry attempts (1-10)
 
-For Supervisor, set `AMAZON_EMAIL`, `AMAZON_PASSWORD`, and `KEEPALIVE_INTERVAL` as environment variables in the add-on configuration.
+For Supervisor, set `AMAZON_EMAIL` and `AMAZON_PASSWORD` as environment variables in the add-on configuration.
 
 ---
 
-## Session Keep-Alive & Auto Re-Login
+## Scheduled Re-Authentication
 
 ### How it works
 
-1. **Heartbeat loop** — Every 45 minutes (configurable), the sidecar loads stored cookies and hits Amazon's `get-household` API endpoint
-2. **Session alive** (HTTP 200) — Cookies are valid. If Amazon rotated any cookies via `Set-Cookie` headers, the updated values are saved automatically
-3. **Session expired** (HTTP 401/403) — If `AMAZON_EMAIL` and `AMAZON_PASSWORD` are set, the sidecar launches a headless Chromium browser and attempts automatic re-login
-4. **2FA/CAPTCHA detected** — Auto re-login cannot solve these. The sidecar logs a warning and you'll need to re-authenticate manually via VNC
-5. **No credentials** — Without credentials, session expiry requires manual VNC re-authentication. The HA integration will show a persistent notification
+1. **Reauth loop** — Every ~20 hours (randomized ±1h), the sidecar performs a full stealth browser login via Xvfb to obtain completely fresh cookies. This replaces the old heartbeat-based approach which couldn't reliably refresh cookies.
+2. **Health check loop** — Every 4 hours, the sidecar hits Amazon's `get-household` API endpoint to verify cookies are still valid.
+3. **Session healthy** (HTTP 200) — Cookies are valid, no action needed.
+4. **Session expired** (HTTP 401/403) — If credentials are configured, triggers an immediate stealth browser re-authentication (up to 3 retries with backoff).
+5. **2FA/CAPTCHA detected** — Auto reauth cannot solve these. The sidecar logs a warning and you'll need to re-authenticate manually via VNC.
+6. **No credentials** — Without credentials, cookie expiry requires manual VNC re-authentication. The HA integration will show a persistent notification.
+
+### Stealth Browser Login
+
+The automated re-authentication uses several anti-detection techniques:
+- Non-headless Chromium running on Xvfb (avoids headless detection)
+- Stealth JavaScript injection (patches `navigator.webdriver`, `.plugins`, etc.)
+- Human-like typing with random inter-key delays (50-150ms)
+- Mouse movement to random points within elements before clicking
+- Random delays between actions (1-5s)
+- Visits `amazon.com` first before navigating to sign-in (natural flow)
 
 ### Monitoring
 
 The Web UI at `http://localhost:8100` shows:
 - Current session status (Healthy / Unhealthy / Unknown)
-- Last and next heartbeat times
-- Whether auto re-login is configured
-- A button to trigger an immediate heartbeat
+- Last reauth time and result (Success / Failed / Never)
+- Next scheduled reauth time
+- Last health check time
+- Whether credentials are configured
+- Buttons to trigger immediate reauth or health check
 
 API endpoints:
-- `GET /api/keepalive/status` — JSON with session health, heartbeat times, failure count
-- `POST /api/keepalive/trigger` — Manually trigger a heartbeat
+- `GET /api/reauth/status` — JSON with session health, reauth times, failure count
+- `POST /api/reauth/trigger` — Trigger immediate full browser re-authentication
+- `POST /api/reauth/health-check` — Trigger immediate health check
 - `GET /api/auth/mode` — Whether auto-login is available or manual-only
-- `GET /api/health` — Overall health including `session_valid` and `last_heartbeat`
+- `GET /api/health` — Overall health including `session_valid` and `next_reauth`
+
+Legacy endpoints (backwards compatible):
+- `GET /api/keepalive/status` — Alias for `/api/reauth/status`
+- `POST /api/keepalive/trigger` — Alias that triggers a health check
 
 ---
 
@@ -277,9 +304,9 @@ entities:
 ```
 User (VNC) --> Auth Sidecar (Playwright browser) --> Amazon login --> cookies saved encrypted
                     |
-                    +--> Keep-alive loop (every 45 min) --> Amazon API heartbeat
+                    +--> Scheduled reauth (~20h) --> full stealth browser login --> fresh cookies
                     |       |
-                    |       +--> Session expired? --> Auto re-login (headless)
+                    |       +--> Health check (4h) --> session expired? --> immediate reauth
                     |
 HA Integration --> Auth Sidecar API (/api/cookies) --> cookies --> Amazon Parent Dashboard API
 ```
@@ -304,8 +331,9 @@ The integration communicates with Amazon Parent Dashboard API:
 | `/api/auth/start` | POST | Start VNC authentication flow |
 | `/api/auth/status/{id}` | GET | Check auth session status |
 | `/api/auth/mode` | GET | Auto-login available or manual-only |
-| `/api/keepalive/status` | GET | Keep-alive heartbeat status |
-| `/api/keepalive/trigger` | POST | Manually trigger a heartbeat |
+| `/api/reauth/status` | GET | Scheduled reauth status |
+| `/api/reauth/trigger` | POST | Trigger immediate re-authentication |
+| `/api/reauth/health-check` | POST | Trigger immediate health check |
 
 ---
 
@@ -327,18 +355,18 @@ The integration communicates with Amazon Parent Dashboard API:
 
 ### Session keeps expiring
 
-1. Check keep-alive status: `curl http://localhost:8100/api/keepalive/status`
-2. Verify `KEEPALIVE_INTERVAL` is set (default 2700s = 45 min)
-3. If auto re-login fails, check logs for 2FA/CAPTCHA messages
-4. Manually trigger a heartbeat: `curl -X POST http://localhost:8100/api/keepalive/trigger`
-5. Set `AMAZON_EMAIL` and `AMAZON_PASSWORD` to enable auto re-login
+1. Check reauth status: `curl http://localhost:8100/api/reauth/status`
+2. Verify `AMAZON_EMAIL` and `AMAZON_PASSWORD` are set (required for auto reauth)
+3. If auto reauth fails, check logs for 2FA/CAPTCHA messages: `docker logs amazonparent-auth`
+4. Manually trigger a reauth: `curl -X POST http://localhost:8100/api/reauth/trigger`
+5. Run a health check: `curl -X POST http://localhost:8100/api/reauth/health-check`
 
 ### Entities not updating
 
 - Integration polls every 60 seconds
 - Force update: Reload integration in UI
 - Check network connectivity to Amazon
-- Verify cookies haven't expired (check `/api/keepalive/status`)
+- Verify cookies haven't expired (check `/api/reauth/status`)
 
 ### Docker Compose issues
 
@@ -364,7 +392,7 @@ HAamazonparent/
 │   │   ├── main.py                    # FastAPI app + Web UI
 │   │   ├── config.py                  # Configuration (env vars)
 │   │   ├── auth/
-│   │   │   └── browser.py            # BrowserAuthManager + KeepAliveManager
+│   │   │   └── browser.py            # BrowserAuthManager + ScheduledReauthManager
 │   │   └── storage/
 │   │       └── file_storage.py        # Encrypted cookie storage
 │   └── rootfs/                        # Container filesystem (s6-overlay)
@@ -393,7 +421,7 @@ HAamazonparent/
 1. **Child-centric control**: API controls all of a child's devices together (not per-device)
 2. **Polling only**: No real-time push updates (60-second refresh interval)
 3. **Unofficial API**: Uses reverse-engineered Amazon endpoints that may change
-4. **2FA/CAPTCHA**: Auto re-login cannot solve these — requires one-time manual VNC auth
+4. **2FA/CAPTCHA**: Auto re-authentication cannot solve these — requires one-time manual VNC auth
 5. **Single region**: Hardcoded to `amazon.com` (US)
 
 ## Security Considerations

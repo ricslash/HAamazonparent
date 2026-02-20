@@ -58,6 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass=hass,
             api_client=api_client,
             addon_url=addon_url,
+            entry_id=entry.entry_id,
         )
 
         # Fetch initial data

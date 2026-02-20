@@ -38,7 +38,9 @@ ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0
 ENV PYTHONUNBUFFERED=1
 ENV AMAZON_EMAIL=""
 ENV AMAZON_PASSWORD=""
-ENV KEEPALIVE_INTERVAL=2700
+ENV REAUTH_INTERVAL=72000
+ENV HEALTH_CHECK_INTERVAL=14400
+ENV REAUTH_MAX_RETRIES=3
 
 # Set working directory
 WORKDIR /app
@@ -81,4 +83,4 @@ LABEL \
     io.hass.name="Amazon Parent Dashboard Auth" \
     io.hass.description="Authentication service for Amazon Parent Dashboard" \
     io.hass.type="addon" \
-    io.hass.version="0.1.4"
+    io.hass.version="0.2.0"

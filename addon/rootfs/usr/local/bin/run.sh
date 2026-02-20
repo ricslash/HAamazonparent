@@ -9,22 +9,29 @@ bashio::log.info "Starting Amazon Parent Dashboard Auth Service..."
 LOG_LEVEL=$(bashio::config 'log_level' 'info')
 AUTH_TIMEOUT=$(bashio::config 'auth_timeout' '300')
 SESSION_DURATION=$(bashio::config 'session_duration' '86400')
+REAUTH_INTERVAL=$(bashio::config 'reauth_interval' '72000')
+HEALTH_CHECK_INTERVAL=$(bashio::config 'health_check_interval' '14400')
+REAUTH_MAX_RETRIES=$(bashio::config 'reauth_max_retries' '3')
 
 # Export environment variables
 export LOG_LEVEL="${LOG_LEVEL}"
 export AUTH_TIMEOUT="${AUTH_TIMEOUT}"
 export SESSION_DURATION="${SESSION_DURATION}"
+export REAUTH_INTERVAL="${REAUTH_INTERVAL}"
+export HEALTH_CHECK_INTERVAL="${HEALTH_CHECK_INTERVAL}"
+export REAUTH_MAX_RETRIES="${REAUTH_MAX_RETRIES}"
 
-# Export credential and keep-alive environment variables (if set)
+# Export credential environment variables (if set)
 export AMAZON_EMAIL="${AMAZON_EMAIL:-}"
 export AMAZON_PASSWORD="${AMAZON_PASSWORD:-}"
-export KEEPALIVE_INTERVAL="${KEEPALIVE_INTERVAL:-2700}"
 
 bashio::log.info "Configuration loaded:"
 bashio::log.info "  - Log Level: ${LOG_LEVEL}"
 bashio::log.info "  - Auth Timeout: ${AUTH_TIMEOUT}s"
 bashio::log.info "  - Session Duration: ${SESSION_DURATION}s"
-bashio::log.info "  - Keep-Alive Interval: ${KEEPALIVE_INTERVAL}s"
+bashio::log.info "  - Reauth Interval: ${REAUTH_INTERVAL}s"
+bashio::log.info "  - Health Check Interval: ${HEALTH_CHECK_INTERVAL}s"
+bashio::log.info "  - Reauth Max Retries: ${REAUTH_MAX_RETRIES}"
 bashio::log.info "  - Auto Re-Login: $([ -n "${AMAZON_EMAIL}" ] && echo 'configured' || echo 'not configured')"
 
 # Ensure shared directory exists
