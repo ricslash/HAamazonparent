@@ -119,3 +119,61 @@ class ChildSchedule:
             if day.name.lower() == day_name.lower():
                 return day
         return None
+
+
+@dataclass
+class AppActivity:
+    """Represents usage for a single app in a time interval."""
+
+    key: str
+    title: str
+    category: str
+    duration_seconds: int
+    activity_count: int
+    thumbnail_url: Optional[str] = None
+
+    @property
+    def duration_minutes(self) -> float:
+        """Return duration in minutes."""
+        return round(self.duration_seconds / 60, 1)
+
+
+@dataclass
+class DailyActivity:
+    """Represents a single day's activity data."""
+
+    date: str  # ISO date string (YYYY-MM-DD)
+    start_time: int  # Epoch seconds
+    end_time: int  # Epoch seconds
+    total_duration_seconds: int
+    app_activities: list[AppActivity]
+
+    @property
+    def total_minutes(self) -> float:
+        """Return total duration in minutes."""
+        return round(self.total_duration_seconds / 60, 1)
+
+
+@dataclass
+class ChildActivityData:
+    """Represents a child's weekly activity data."""
+
+    child_directed_id: str
+    daily_activities: list[DailyActivity]
+
+    def get_today_activity(self, today_str: str) -> Optional[DailyActivity]:
+        """Get activity for today by ISO date string."""
+        for day in self.daily_activities:
+            if day.date == today_str:
+                return day
+        return None
+
+    @property
+    def weekly_total_seconds(self) -> int:
+        """Return total seconds for the week."""
+        return sum(d.total_duration_seconds for d in self.daily_activities)
+
+    @property
+    def weekly_total_minutes(self) -> float:
+        """Return total minutes for the week."""
+        return round(self.weekly_total_seconds / 60, 1)

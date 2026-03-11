@@ -15,6 +15,7 @@ from ..const import (
     API_GET_TIME_LIMITS,
     API_SET_OFFSCREEN_TIME,
     API_SET_TIME_LIMIT,
+    API_GET_WEEKLY_ACTIVITIES,
     LOGGER_NAME,
 )
 from ..exceptions import (
@@ -30,6 +31,9 @@ from ..models import (
     CurfewConfig,
     TimeLimits,
     GoalsConfig,
+    ChildActivityData,
+    DailyActivity,
+    AppActivity,
 )
 
 if TYPE_CHECKING:
@@ -137,12 +141,20 @@ class AmazonParentAPIClient:
         return self._session
 
     def _get_headers(self, for_post: bool = False) -> dict[str, str]:
-        """Get request headers."""
+        """Get request headers matching a real browser fingerprint."""
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
             "Referer": "https://www.amazon.com/parentdashboard/",
             "x-amzn-csrf": self._csrf_token,
+            "sec-ch-ua": '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "priority": "u=1, i",
         }
 
         if for_post:
@@ -278,6 +290,123 @@ class AmazonParentAPIClient:
 
             _LOGGER.debug(f"Retrieved schedule for child {child_directed_id[:20]}")
             return schedule
+
+    async def async_set_time_limits(
+        self, child_directed_id: str, period_configurations: list[dict]
+    ) -> None:
+        """Set time limits for a child (full weekly schedule)."""
+        if not self.is_authenticated():
+            raise AuthenticationError("Not authenticated")
+
+        session = await self._get_session()
+        url = f"{API_BASE_URL}{API_SET_TIME_LIMIT}"
+
+        payload = {
+            "childDirectedId": child_directed_id,
+            "periodConfigurations": period_configurations,
+        }
+
+        async with session.put(
+            url, headers=self._get_headers(for_post=True), json=payload
+        ) as resp:
+            if resp.status in (401, 403):
+                raise SessionExpiredError(f"Session expired (HTTP {resp.status})")
+            if resp.status != 200:
+                text = await resp.text()
+                raise NetworkError(f"Failed to set time limits: {resp.status} - {text}")
+
+            _LOGGER.debug(f"Set time limits for child {child_directed_id[:20]}")
+
+    async def async_get_weekly_activities(
+        self, child_directed_id: str, start_time: int, end_time: int, timezone: str
+    ) -> ChildActivityData:
+        """Get weekly activity data for a child."""
+        if not self.is_authenticated():
+            raise AuthenticationError("Not authenticated")
+
+        session = await self._get_session()
+        url = f"{API_BASE_URL}{API_GET_WEEKLY_ACTIVITIES}"
+
+        payload = {
+            "childDirectedId": child_directed_id,
+            "startTime": start_time,
+            "endTime": end_time,
+            "aggregationInterval": 86400,
+            "timeZone": timezone,
+        }
+
+        async with session.post(
+            url, headers=self._get_headers(for_post=True), json=payload
+        ) as resp:
+            if resp.status in (401, 403):
+                raise SessionExpiredError(f"Session expired (HTTP {resp.status})")
+            if resp.status != 200:
+                text = await resp.text()
+                raise NetworkError(f"Failed to get activities: {resp.status} - {text}")
+
+            data = await resp.json()
+            daily_activities: list[DailyActivity] = []
+
+            for category_data in data.get("activityV2Data", []):
+                for interval in category_data.get("intervals", []):
+                    interval_start = interval["startTime"]
+                    tz_obj = self._get_tz(timezone)
+                    if tz_obj:
+                        interval_date = datetime.fromtimestamp(
+                            interval_start, tz=tz_obj
+                        ).strftime("%Y-%m-%d")
+                    else:
+                        interval_date = datetime.fromtimestamp(
+                            interval_start, tz=timezone.utc
+                        ).strftime("%Y-%m-%d")
+
+                    # Find or create daily activity for this date
+                    existing = next(
+                        (d for d in daily_activities if d.date == interval_date), None
+                    )
+                    if existing is None:
+                        existing = DailyActivity(
+                            date=interval_date,
+                            start_time=interval["startTime"],
+                            end_time=interval["endTime"],
+                            total_duration_seconds=0,
+                            app_activities=[],
+                        )
+                        daily_activities.append(existing)
+
+                    existing.total_duration_seconds += interval.get(
+                        "aggregatedDuration", 0
+                    )
+
+                    for result in interval.get("aggregatedActivityResults", []):
+                        attrs = result.get("attributes", {})
+                        existing.app_activities.append(
+                            AppActivity(
+                                key=result.get("key", ""),
+                                title=attrs.get("TITLE", "Unknown"),
+                                category=attrs.get("CATEGORY", "UNKNOWN"),
+                                duration_seconds=result.get("activityDuration", 0),
+                                activity_count=result.get("activityCount", 0),
+                                thumbnail_url=attrs.get("THUMBNAIL_URL"),
+                            )
+                        )
+
+            _LOGGER.debug(
+                f"Retrieved {len(daily_activities)} days of activity for child {child_directed_id[:20]}"
+            )
+            return ChildActivityData(
+                child_directed_id=child_directed_id,
+                daily_activities=daily_activities,
+            )
+
+    @staticmethod
+    def _get_tz(timezone_str: str):
+        """Get timezone object from string."""
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(timezone_str)
+        except Exception:
+            return None
 
     async def async_pause_limits(
         self, directed_ids: list[str], duration_seconds: int

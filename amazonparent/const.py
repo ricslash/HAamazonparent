@@ -24,6 +24,7 @@ API_GET_CHILD_DEVICES = "/get-child-devices"
 API_GET_TIME_LIMITS = "/get-adjusted-time-limits"
 API_SET_OFFSCREEN_TIME = "/set-offscreen-time"
 API_SET_TIME_LIMIT = "/set-time-limit-v2"
+API_GET_WEEKLY_ACTIVITIES = "/get-weekly-activities-v2"
 
 # Device types
 DEVICE_TYPE_ECHO = "echo"
