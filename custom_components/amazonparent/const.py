@@ -25,6 +25,13 @@ API_GET_TIME_LIMITS = "/get-adjusted-time-limits"
 API_SET_OFFSCREEN_TIME = "/set-offscreen-time"
 API_SET_TIME_LIMIT = "/set-time-limit-v2"
 API_GET_WEEKLY_ACTIVITIES = "/get-weekly-activities-v2"
+API_GET_BONUS_TIME = "/get-bonus-time"
+API_SET_BONUS_TIME = "/set-bonus-time"
+API_DELETE_BONUS_TIME = "/delete-bonus-time"
+
+# Services
+SERVICE_ADD_BONUS_TIME = "add_bonus_time"
+SERVICE_CLEAR_BONUS_TIME = "clear_bonus_time"
 
 # Device types
 DEVICE_TYPE_ECHO = "echo"
@@ -36,6 +43,8 @@ PLATFORMS = ["sensor", "switch", "button"]
 # Attributes
 ATTR_CHILD_ID = "child_id"
 ATTR_CHILD_NAME = "child_name"
+ATTR_CHILD = "child"
+ATTR_MINUTES = "minutes"
 ATTR_DEVICE_ID = "device_id"
 ATTR_DEVICE_NAME = "device_name"
 ATTR_DURATION = "duration"

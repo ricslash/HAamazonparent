@@ -2,21 +2,87 @@
 from __future__ import annotations
 
 import logging
+import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 
 from .auth.addon_client import AddonCookieClient
 from .client.api import AmazonParentAPIClient
-from .const import CONF_ADDON_URL, DOMAIN, LOGGER_NAME
+from .const import (
+    ATTR_CHILD,
+    ATTR_MINUTES,
+    CONF_ADDON_URL,
+    DOMAIN,
+    LOGGER_NAME,
+    SERVICE_ADD_BONUS_TIME,
+    SERVICE_CLEAR_BONUS_TIME,
+)
 from .coordinator import AmazonParentDataUpdateCoordinator
 from .exceptions import AmazonParentException, AuthenticationError
 
 _LOGGER = logging.getLogger(LOGGER_NAME)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH, Platform.BUTTON]
+
+ADD_BONUS_TIME_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CHILD): cv.string,
+        vol.Required(ATTR_MINUTES): vol.All(vol.Coerce(int), vol.Range(min=0, max=1440)),
+    }
+)
+
+CLEAR_BONUS_TIME_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CHILD): cv.string,
+    }
+)
+
+
+def _get_coordinator(hass: HomeAssistant) -> AmazonParentDataUpdateCoordinator:
+    """Return the first active Amazon Parent coordinator."""
+    coordinators = hass.data.get(DOMAIN, {})
+    if not coordinators:
+        raise HomeAssistantError("Amazon Parent Dashboard integration is not loaded")
+    return next(iter(coordinators.values()))
+
+
+def _register_services(hass: HomeAssistant) -> None:
+    """Register Amazon Parent bonus-time services if not already registered."""
+
+    async def handle_add_bonus_time(call: ServiceCall) -> None:
+        coordinator = _get_coordinator(hass)
+        try:
+            await coordinator.async_add_bonus_time(
+                call.data[ATTR_CHILD], call.data[ATTR_MINUTES]
+            )
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+
+    async def handle_clear_bonus_time(call: ServiceCall) -> None:
+        coordinator = _get_coordinator(hass)
+        try:
+            await coordinator.async_clear_bonus_time(call.data[ATTR_CHILD])
+        except ValueError as err:
+            raise HomeAssistantError(str(err)) from err
+
+    if not hass.services.has_service(DOMAIN, SERVICE_ADD_BONUS_TIME):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_ADD_BONUS_TIME,
+            handle_add_bonus_time,
+            schema=ADD_BONUS_TIME_SCHEMA,
+        )
+    if not hass.services.has_service(DOMAIN, SERVICE_CLEAR_BONUS_TIME):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_CLEAR_BONUS_TIME,
+            handle_clear_bonus_time,
+            schema=CLEAR_BONUS_TIME_SCHEMA,
+        )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -70,6 +136,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Set up platforms
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        _register_services(hass)
 
         _LOGGER.info(
             f"Amazon Parent Dashboard integration loaded: "
@@ -97,5 +164,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Clean up coordinator
         coordinator: AmazonParentDataUpdateCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.async_cleanup()
+        if not hass.data[DOMAIN]:
+            hass.services.async_remove(DOMAIN, SERVICE_ADD_BONUS_TIME)
+            hass.services.async_remove(DOMAIN, SERVICE_CLEAR_BONUS_TIME)
 
     return unload_ok

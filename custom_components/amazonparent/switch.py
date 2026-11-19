@@ -1,12 +1,12 @@
 """Switch platform for Amazon Parent Dashboard."""
 import logging
-from datetime import datetime
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, ATTR_CHILD_ID, ATTR_CHILD_NAME
 from .coordinator import AmazonParentDataUpdateCoordinator
@@ -130,7 +130,7 @@ class TimeLimitsEnabledSwitch(CoordinatorEntity, SwitchEntity):
         if not schedule:
             return None
 
-        today = datetime.now().strftime("%A")
+        today = dt_util.now().strftime("%A")
         day_schedule = schedule.get_day_schedule(today)
         if day_schedule:
             return day_schedule.time_limits.content_time_limits_enabled
@@ -145,7 +145,7 @@ class TimeLimitsEnabledSwitch(CoordinatorEntity, SwitchEntity):
         }
         schedule = self.coordinator.get_schedule_for_child(self._child.directed_id)
         if schedule:
-            today = datetime.now().strftime("%A")
+            today = dt_util.now().strftime("%A")
             day_schedule = schedule.get_day_schedule(today)
             if day_schedule:
                 attrs["daily_limit_minutes"] = day_schedule.time_limits.total_minutes

@@ -59,9 +59,11 @@ Home Assistant custom integration for Amazon Parent Dashboard that provides moni
    - Search for "Amazon Parent Dashboard"
    - Enter add-on URL (default: `http://localhost:8100`)
 
-### Method 2: HACS (Future)
+### Method 2: HACS (Custom Repository)
 
-_Will be available once published to HACS_
+1. Open **HACS** → **Integrations** → **⋮** → **Custom repositories**
+2. Add `https://github.com/ricslash/HAamazonparent` with category **Integration**
+3. Download **Amazon Parent Dashboard** and restart Home Assistant
 
 ## Configuration
 
@@ -75,19 +77,30 @@ The integration uses the authentication add-on for cookie management. No manual 
 
 ## Entities Created
 
-For each child in your Amazon household, the integration creates:
+For each child in your Amazon household (under device `{Child}'s Account`), the integration creates:
 
 ### Sensors
-- `sensor.{child_name}_daily_time_limit` - Daily time limit in minutes
-- `sensor.{child_name}_device_count` - Number of devices
+- `sensor.{child}_s_account_daily_time_limit` - Daily time limit in minutes
+- `sensor.{child}_s_account_device_count` - Number of devices
+- `sensor.{child}_s_account_screen_time_today` - Screen time used today
+- `sensor.{child}_s_account_screen_time_this_week` - Screen time used this week
+- `sensor.{child}_s_account_screen_time_remaining` - Daily screen time remaining
+- `sensor.{child}_s_account_bonus_time` - Bonus minutes granted today (reset at local midnight; adjusted on early clear)
+- `sensor.{child}_s_account_bonus_time_remaining` - Remaining minutes on active bonus window
 
 ### Switches
-- `switch.{child_name}_pause_limits` - Pause/resume time limits
+- `switch.{child}_s_account_pause_limits` - Pause/resume time limits
+- `switch.{child}_s_account_time_limits` - Enable/disable daily time limits
 
 ### Buttons
-- `button.{child_name}_pause_15min` - Pause for 15 minutes
-- `button.{child_name}_pause_30min` - Pause for 30 minutes
-- `button.{child_name}_pause_1_hour` - Pause for 1 hour
+- `button.{child}_s_account_pause_15min` - Pause for 15 minutes
+- `button.{child}_s_account_pause_30min` - Pause for 30 minutes
+- `button.{child}_s_account_pause_1_hour` - Pause for 1 hour
+- `button.{child}_s_account_clear_bonus_time` - Clear active bonus time and restore baseline schedule
+
+### Services
+- `amazonparent.add_bonus_time` (`child`, `minutes`) - Grant additive bonus minutes while preserving baseline schedules/limits; `minutes: 0` clears active bonus time
+- `amazonparent.clear_bonus_time` (`child`) - Clear active bonus time and restore baseline schedules/limits
 
 ## Usage Examples
 
@@ -126,6 +139,9 @@ This integration communicates with Amazon Parent Dashboard API endpoints:
 - `GET /get-household` - Fetch family members
 - `GET /get-child-devices` - Fetch devices
 - `GET /get-adjusted-time-limits` - Fetch schedules
+- `GET /get-bonus-time` - Fetch active bonus-time allotment
+- `PUT /set-bonus-time` - Grant additive bonus time
+- `PUT /delete-bonus-time` - Clear active bonus time
 - `POST /set-offscreen-time` - Pause/resume limits
 
 Authentication is handled via cookies + CSRF tokens extracted by the authentication add-on.
@@ -163,6 +179,7 @@ custom_components/amazonparent/
 ├── coordinator.py           # Data fetching coordinator
 ├── config_flow.py           # Configuration UI
 ├── strings.json             # UI text
+├── services.yaml            # Service definitions
 ├── sensor.py                # Sensor entities
 ├── switch.py                # Switch entities
 ├── button.py                # Button entities

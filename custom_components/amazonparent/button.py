@@ -36,6 +36,9 @@ async def async_setup_entry(
             # 1 hour pause
             entities.append(PauseButton(coordinator, member, 60, "Pause 1 hour"))
 
+            # Clear bonus time button
+            entities.append(ClearBonusTimeButton(coordinator, member))
+
     async_add_entities(entities)
 
 
@@ -89,4 +92,48 @@ class PauseButton(CoordinatorEntity, ButtonEntity):
             )
         except Exception as err:
             _LOGGER.error(f"Failed to pause limits: {err}")
+            raise
+
+
+class ClearBonusTimeButton(CoordinatorEntity, ButtonEntity):
+    """Button to clear active bonus time and restore baseline schedule."""
+
+    def __init__(
+        self,
+        coordinator: AmazonParentDataUpdateCoordinator,
+        child: HouseholdMember,
+    ) -> None:
+        """Initialize the clear bonus time button."""
+        super().__init__(coordinator)
+        self._child = child
+        self._attr_unique_id = f"{child.directed_id}_clear_bonus_time"
+        self._attr_name = "Clear Bonus Time"
+        self._attr_icon = "mdi:clock-remove-outline"
+        self._attr_has_entity_name = True
+
+    @property
+    def device_info(self):
+        """Return device information."""
+        return {
+            "identifiers": {(DOMAIN, self._child.directed_id)},
+            "name": f"{self._child.display_name}'s Account",
+            "manufacturer": "Amazon",
+            "model": "Parent Dashboard Child Account",
+        }
+
+    @property
+    def extra_state_attributes(self):
+        """Return extra state attributes."""
+        return {
+            ATTR_CHILD_ID: self._child.directed_id,
+            ATTR_CHILD_NAME: self._child.display_name,
+        }
+
+    async def async_press(self) -> None:
+        """Clear today's bonus time for the child."""
+        try:
+            await self.coordinator.async_clear_bonus_time(self._child.directed_id)
+            _LOGGER.info("Cleared bonus time for %s", self._child.display_name)
+        except Exception as err:
+            _LOGGER.error("Failed to clear bonus time: %s", err)
             raise
