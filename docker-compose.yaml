@@ -16,7 +16,7 @@ services:
     container_name: amazonparent-auth
     ports:
       - "8100:8100"
-      - "5903:5903"
+      - "6080:6080"
     environment:
       - AMAZON_EMAIL=${AMAZON_EMAIL}
       - AMAZON_PASSWORD=${AMAZON_PASSWORD}

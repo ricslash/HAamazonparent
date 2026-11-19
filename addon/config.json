@@ -11,11 +11,11 @@
   "init": false,
   "ports": {
     "8100/tcp": 8100,
-    "5903/tcp": 5903
+    "6080/tcp": 6080
   },
   "ports_description": {
     "8100/tcp": "Web UI and API",
-    "5903/tcp": "VNC server for browser access"
+    "6080/tcp": "noVNC web client for browser access"
   },
   "map": [
     "share:rw"

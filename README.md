@@ -48,7 +48,7 @@ This is the simplest way to run everything standalone, without HA OS or Supervis
 ### Prerequisites
 
 - Docker and Docker Compose v2
-- A VNC client for initial authentication
+- A modern web browser for initial authentication (via built-in noVNC)
 
 ### Step 1: Configure credentials
 
@@ -72,7 +72,7 @@ docker compose up -d
 ```
 
 This starts two containers:
-- `amazonparent-auth` — auth sidecar on ports 8100 (API/UI) and 5903 (VNC)
+- `amazonparent-auth` — auth sidecar on ports 8100 (API/UI) and 6080 (noVNC browser view; `x11vnc` binds to `127.0.0.1:5903` only)
 - `homeassistant` — Home Assistant on the host network
 
 The HA container waits for the auth sidecar health check to pass before starting.
@@ -81,7 +81,7 @@ The HA container waits for the auth sidecar health check to pass before starting
 
 1. Open `http://localhost:8100` in your browser
 2. Click **Start Authentication (VNC)**
-3. Connect to VNC at `localhost:5903` (password: `amazonparent`)
+3. Click the **noVNC** link in the Web UI (or open `http://localhost:6080/vnc.html?autoconnect=true&resize=scale`) with password `amazonparent`
 4. Sign in to Amazon in the browser window
 5. Complete 2FA if prompted
 6. The Web UI will show "Authentication successful" when done
@@ -124,7 +124,7 @@ You can also monitor the re-authentication panel in the Web UI at `http://localh
 ### Prerequisites
 
 - Home Assistant 2023.1 or newer with Supervisor
-- A VNC client for initial authentication
+- A modern web browser for initial authentication (via built-in noVNC)
 
 ### Step 1: Install Authentication Add-on
 
@@ -144,22 +144,16 @@ You can also monitor the re-authentication panel in the Web UI at `http://localh
    - Click "Open Web UI" or navigate to `http://[YOUR_HA_IP]:8100`
    - Click "Start Authentication (VNC)"
 
-   **b. Install a VNC client (if you don't have one):**
-   - **Windows**: Download [TigerVNC](https://github.com/TigerVNC/tigervnc/releases) or [RealVNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)
-   - **macOS**: Use built-in Screen Sharing (Finder > Cmd+K) or [RealVNC Viewer](https://www.realvnc.com/en/connect/download/viewer/)
-   - **Linux**: Install via package manager: `sudo apt install tigervnc-viewer`
-   - **Mobile**: Install "VNC Viewer" app from App Store or Google Play
-
-   **c. Connect to the VNC server:**
-   - Enter `[YOUR_HA_IP]:5903` and connect
+   **b. Open noVNC in your browser:**
+   - Click the **noVNC** link in the Web UI (or navigate to `http://[YOUR_HA_IP]:6080/vnc.html?autoconnect=true&resize=scale`)
    - **Password**: `amazonparent`
 
-   **d. Sign in to Amazon:**
+   **c. Sign in to Amazon:**
    - Enter your Amazon email and password in the browser window
    - Complete two-factor authentication if prompted
    - The add-on will automatically detect successful login and save cookies
 
-   **e. Confirmation:**
+   **d. Confirmation:**
    - Return to the add-on Web UI — you should see "Authentication successful!"
 
 ### Step 2: Install Custom Integration
@@ -348,7 +342,7 @@ The integration communicates with Amazon Parent Dashboard API:
 
 ### Authentication fails
 
-1. Ensure VNC connection works at port 5903
+1. Ensure noVNC is reachable on port 6080 (`http://localhost:6080/vnc.html`)
 2. Check sidecar logs: `docker logs amazonparent-auth`
 3. Try increasing `AUTH_TIMEOUT`
 4. Verify Amazon credentials are correct
@@ -373,7 +367,7 @@ The integration communicates with Amazon Parent Dashboard API:
 - **Build fails**: Ensure Docker has at least 4GB memory available (Playwright/Chromium is large)
 - **Sidecar unhealthy**: Check `docker logs amazonparent-auth` for startup errors
 - **HA can't reach sidecar**: Use `http://amazonparent-auth:8100` as the add-on URL (Docker service name)
-- **VNC won't connect**: Ensure port 5903 is mapped and not firewalled
+- **VNC won't connect**: Ensure port 6080 is mapped and not firewalled (`x11vnc` binds to `127.0.0.1:5903` only)
 
 ---
 
@@ -430,9 +424,9 @@ This integration is designed for home use on **trusted local networks**:
 
 - **Encrypted Storage**: Amazon session cookies are encrypted at rest with Fernet
 - **Credentials in env vars**: `AMAZON_EMAIL`/`AMAZON_PASSWORD` are passed via environment variables, never written to disk. Use `.env` (gitignored) or Docker secrets
-- **VNC Access**: VNC password (`amazonparent`) is for local use only — do not expose port 5903 to the internet
+- **VNC Access**: `x11vnc` binds to `127.0.0.1:5903` only and is served over noVNC on port `6080`; VNC password (`amazonparent`) is for local/authenticated use only — do not expose raw VNC to the internet
 - **Isolated Container**: Sidecar runs in its own Docker container
-- **No Internet Exposure**: Do NOT expose ports 8100 or 5903 to the internet. Use a VPN (WireGuard, Tailscale) for remote access
+- **No Internet Exposure**: Do NOT expose ports 8100 or 6080 directly to the internet. Use a VPN (WireGuard, Tailscale) or an authenticating reverse proxy for remote access
 
 For detailed security information, see [SECURITY.md](SECURITY.md).
 

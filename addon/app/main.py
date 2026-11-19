@@ -403,7 +403,7 @@ async def index():
             <ol>
                 <li>Click "Start Authentication (VNC)" for initial login</li>
                 <li>A browser window will open with Amazon login page</li>
-                <li>Connect via VNC (port 5903) to see the browser</li>
+                <li>Open <a id="novnc-link" href="/vnc/" target="_blank">noVNC</a> to see the browser (VNC password: <code>amazonparent</code>)</li>
                 <li>Sign in with your Amazon account</li>
                 <li>Complete two-factor authentication if prompted</li>
                 <li>Wait for the success message</li>
@@ -419,6 +419,13 @@ async def index():
     </div>
 
     <script>
+        const novncLink = document.getElementById('novnc-link');
+        if (novncLink) {{
+            novncLink.href = window.location.port === '8100'
+                ? `${{window.location.protocol}}//${{window.location.hostname}}:6080/vnc.html?autoconnect=true&resize=scale`
+                : '/vnc/';
+        }}
+
         let sessionId = null;
         let statusCheckInterval = null;
 
@@ -443,7 +450,7 @@ async def index():
                 const data = await response.json();
                 sessionId = data.session_id;
 
-                showStatus("Browser window opened. Please sign in via VNC (port 5903)...", "info");
+                showStatus("Browser window opened. Please open noVNC to sign in...", "info");
                 button.innerHTML = '<div class="loader"></div><span>Waiting for login...</span>';
 
                 statusCheckInterval = setInterval(checkAuthStatus, 2000);
