@@ -44,7 +44,8 @@ bashio::log.info "Shared storage ready at /share/amazonparent"
 bashio::log.info "Starting virtual display (Xvfb)..."
 
 # Kill any existing processes from previous runs
-pkill -9 -f "x11vnc.*5904" 2>/dev/null || true
+pkill -9 -f "websockify.*6080" 2>/dev/null || true
+pkill -9 -f "x11vnc.*590[34]" 2>/dev/null || true
 pkill -9 -f "fluxbox.*:100" 2>/dev/null || true
 pkill -9 -f "Xvfb :100" 2>/dev/null || true
 
@@ -68,10 +69,11 @@ fluxbox &
 # Wait for window manager to initialize
 sleep 1
 
-# Start VNC server for remote access
-bashio::log.info "Starting VNC server on port 5903..."
+# Start VNC server (localhost only; exposed via noVNC/websockify on 6080)
+bashio::log.info "Starting VNC server on 127.0.0.1:5903 and noVNC on port 6080..."
 bashio::log.info "VNC password: amazonparent"
-x11vnc -display :100 -forever -shared -rfbport 5903 -passwd amazonparent &
+x11vnc -display :100 -localhost -forever -shared -rfbport 5903 -passwd amazonparent &
+websockify --web /usr/share/novnc 6080 localhost:5903 &
 
 bashio::log.info "Starting FastAPI application..."
 

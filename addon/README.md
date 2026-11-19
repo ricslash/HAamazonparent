@@ -22,16 +22,16 @@ Provides browser-based authentication for Amazon Parent Dashboard integration.
 1. Start the add-on
 2. Click "Open Web UI" or go to http://[YOUR_HA_IP]:8100
 3. Click "Start Authentication"
-4. **Connect via VNC** to see the browser: vnc://[YOUR_HA_IP]:5903
+4. **Open noVNC** in your browser (or click the **noVNC** link in the Web UI): `http://[YOUR_HA_IP]:6080/vnc.html`
    - Password: `amazonparent`
-5. Sign in to Amazon in the VNC browser
+5. Sign in to Amazon in the noVNC browser
 6. Wait for success message
 7. Configure the Amazon Parent Dashboard integration
 
 ## Ports
 
 - **8100**: Web UI and API
-- **5903**: VNC server (password: `amazonparent`)
+- **6080**: noVNC web client (proxies to localhost-only VNC on `127.0.0.1:5903`, password: `amazonparent`)
 
 ## Support
 

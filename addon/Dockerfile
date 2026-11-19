@@ -25,9 +25,12 @@ RUN apt-get update \
         libxrandr2 \
         libgbm1 \
         libasound2 \
+        libatomic1 \
         xvfb \
         x11vnc \
         fluxbox \
+        novnc \
+        websockify \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -64,6 +67,7 @@ COPY rootfs /
 
 # Make scripts executable
 RUN chmod a+x /usr/local/bin/run.sh \
+    && chmod a+x /usr/local/bin/run-standalone.sh \
     && chmod a+x /etc/services.d/amazonparent/run \
     && chmod a+x /etc/services.d/amazonparent/finish
 
@@ -72,7 +76,7 @@ RUN mkdir -p /share/amazonparent && \
     chmod 700 /share/amazonparent
 
 # Expose ports
-EXPOSE 8100 5903
+EXPOSE 8100 6080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \

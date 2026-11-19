@@ -17,11 +17,12 @@ This integration is designed for:
 
 ### Intentional Design Choices
 
-#### VNC Server with Known Password
-**Location**: Port 5903, password `amazonparent`
+#### noVNC Web Client / Localhost-Only VNC Server with Known Password
+**Location**: noVNC on port 6080 (proxying localhost-only `x11vnc` on `127.0.0.1:5903`), password `amazonparent`
 
 **This is intentional, not a vulnerability**:
-- VNC exists specifically so you can see the browser during Amazon authentication
+- noVNC exists specifically so you can see the browser during Amazon authentication
+- `x11vnc` binds to `127.0.0.1:5903` only and is accessed via noVNC/websockify on port 6080
 - The password is documented because users need it to connect
 - Only exposes a browser window, not system access
 - Runs on local network only (not internet-accessible)
@@ -77,7 +78,7 @@ This integration is designed for:
 | Port | Service | Purpose | Accessible From |
 |------|---------|---------|----------------|
 | 8100 | API | Home Assistant integration | Local network |
-| 5903 | VNC | View browser during auth | Local network |
+| 6080 | noVNC | Browser VNC client during auth (`x11vnc` binds `127.0.0.1:5903` only) | Local network |
 
 Both services are intentionally local-network accessible for functionality.
 
