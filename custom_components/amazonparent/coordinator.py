@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
@@ -57,6 +57,10 @@ class AmazonParentDataUpdateCoordinator(DataUpdateCoordinator):
         self.devices: list[Device] = []
         self.child_schedules: dict[str, ChildSchedule] = {}
         self.child_activities: dict[str, ChildActivityData] = {}
+        self.child_bonus_allotted: dict[str, int] = {}
+        self.child_bonus_given_today: dict[str, int] = {}
+        self.child_bonus_expires_at: dict[str, datetime | None] = {}
+        self._bonus_tracking_date: str | None = None
         self._saved_time_limits: dict[str, dict[str, dict]] = {}  # child_id -> day_name -> limits
         self._last_weekly_log_date: str | None = None
 
@@ -166,6 +170,14 @@ class AmazonParentDataUpdateCoordinator(DataUpdateCoordinator):
         except Exception:
             pass
 
+        # Roll over daily bonus tracking counters at local midnight.
+        today_str = now.strftime("%Y-%m-%d")
+        if self._bonus_tracking_date is not None and self._bonus_tracking_date != today_str:
+            self.child_bonus_given_today.clear()
+            self.child_bonus_expires_at.clear()
+            self.child_bonus_allotted.clear()
+        self._bonus_tracking_date = today_str
+
         for child in children:
             try:
                 schedule = await self.api_client.async_get_time_limits(
@@ -177,6 +189,17 @@ class AmazonParentDataUpdateCoordinator(DataUpdateCoordinator):
             except Exception as err:
                 _LOGGER.warning(
                     f"Failed to get schedule for child {child.display_name}: {err}"
+                )
+
+            # Fetch current allotted bonus minutes for today
+            try:
+                allotted = await self.api_client.async_get_bonus_time(child.directed_id)
+                self._reconcile_bonus_state(child.directed_id, allotted, now)
+            except SessionExpiredError:
+                raise
+            except Exception as err:
+                _LOGGER.warning(
+                    f"Failed to get bonus time for child {child.display_name}: {err}"
                 )
 
             # Fetch activity data (last 7 days)
@@ -363,6 +386,56 @@ class AmazonParentDataUpdateCoordinator(DataUpdateCoordinator):
         """Get activity data for a specific child."""
         return self.child_activities.get(child_id)
 
+    def _reconcile_bonus_state(
+        self, child_id: str, allotted: int, now: datetime
+    ) -> None:
+        """Keep today's bonus counters and expiration synced with Amazon's value."""
+        prev_allotted = self.child_bonus_allotted.get(child_id)
+        self.child_bonus_allotted[child_id] = allotted
+        cur_exp = self.child_bonus_expires_at.get(child_id)
+
+        if allotted <= 0:
+            if cur_exp is not None and cur_exp > now:
+                unused = round((cur_exp - now).total_seconds() / 60)
+                have = self.child_bonus_given_today.get(child_id, 0)
+                self.child_bonus_given_today[child_id] = max(0, have - unused)
+            if cur_exp is not None:
+                self.child_bonus_expires_at[child_id] = None
+            return
+
+        if prev_allotted is not None and allotted > prev_allotted:
+            delta = allotted - prev_allotted
+            self.child_bonus_given_today[child_id] = (
+                self.child_bonus_given_today.get(child_id, 0) + delta
+            )
+            base = cur_exp if (cur_exp is not None and cur_exp > now) else now
+            self.child_bonus_expires_at[child_id] = base + timedelta(minutes=delta)
+        elif self.child_bonus_given_today.get(child_id, 0) == 0:
+            self.child_bonus_given_today[child_id] = allotted
+
+    def get_bonus_remaining_minutes(self, child_id: str) -> float:
+        """Return remaining minutes on the current active bonus window."""
+        exp = self.child_bonus_expires_at.get(child_id)
+        if exp is None:
+            return 0.0
+        now = dt_util.now()
+        if exp <= now:
+            return 0.0
+        return round(max(0.0, (exp - now).total_seconds() / 60), 1)
+
+    def resolve_child_id(self, child_id_or_name: str) -> str:
+        """Resolve a child directedId or first name (case-insensitive) to directedId."""
+        target = child_id_or_name.strip()
+        target_lower = target.lower()
+        for member in self.household_members:
+            if not member.is_child:
+                continue
+            if member.directed_id == target:
+                return member.directed_id
+            if (member.first_name or "").strip().lower() == target_lower:
+                return member.directed_id
+        raise ValueError(f"Unknown Amazon Parent child '{child_id_or_name}'")
+
     def _log_weekly_summary(self, children: list[HouseholdMember]) -> None:
         """Log weekly activity summary once per day."""
         today_str = dt_util.now().strftime("%Y-%m-%d")
@@ -477,6 +550,62 @@ class AmazonParentDataUpdateCoordinator(DataUpdateCoordinator):
             await self._async_refresh_auth()
             await self.api_client.async_set_time_limits(child_id, period_configs)
 
+        await self.async_refresh()
+
+    async def _call_with_reauth(self, coro_factory) -> None:
+        """Execute an API write call, refreshing cookies once if the session expired."""
+        try:
+            await coro_factory()
+        except SessionExpiredError:
+            _LOGGER.warning("Session expired during API call, refreshing and retrying")
+            await self._async_refresh_auth()
+            await coro_factory()
+
+    async def async_add_bonus_time(self, child_id_or_name: str, minutes: int) -> None:
+        """Grant additive bonus minutes (or clear if <= 0), preserving baseline schedule."""
+        minutes_int = int(minutes)
+        if minutes_int <= 0:
+            await self.async_clear_bonus_time(child_id_or_name)
+            return
+
+        child_id = self.resolve_child_id(child_id_or_name)
+        timezone_str = self.hass.config.time_zone or "America/Denver"
+        await self._call_with_reauth(
+            lambda: self.api_client.async_add_bonus_time(
+                child_id, minutes_int, timezone_str
+            )
+        )
+
+        now = dt_util.now()
+        if self._bonus_tracking_date is None:
+            self._bonus_tracking_date = now.strftime("%Y-%m-%d")
+        cur_exp = self.child_bonus_expires_at.get(child_id)
+        base = cur_exp if (cur_exp is not None and cur_exp > now) else now
+        self.child_bonus_expires_at[child_id] = base + timedelta(minutes=minutes_int)
+        self.child_bonus_given_today[child_id] = (
+            self.child_bonus_given_today.get(child_id, 0) + minutes_int
+        )
+        # Update expected Amazon allotted count before refresh so poll doesn't double-count.
+        self.child_bonus_allotted[child_id] = (
+            self.child_bonus_allotted.get(child_id, 0) + minutes_int
+        )
+        await self.async_refresh()
+
+    async def async_clear_bonus_time(self, child_id_or_name: str) -> None:
+        """Clear today's allotted bonus time and remove the active bonus window."""
+        child_id = self.resolve_child_id(child_id_or_name)
+        await self._call_with_reauth(
+            lambda: self.api_client.async_delete_bonus_time(child_id)
+        )
+
+        now = dt_util.now()
+        cur_exp = self.child_bonus_expires_at.get(child_id)
+        if cur_exp is not None and cur_exp > now:
+            unused = round((cur_exp - now).total_seconds() / 60)
+            have = self.child_bonus_given_today.get(child_id, 0)
+            self.child_bonus_given_today[child_id] = max(0, have - unused)
+        self.child_bonus_expires_at[child_id] = None
+        self.child_bonus_allotted[child_id] = 0
         await self.async_refresh()
 
     async def async_cleanup(self) -> None:

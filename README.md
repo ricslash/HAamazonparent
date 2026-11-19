@@ -22,14 +22,22 @@ This project provides two components that work together:
 - Device count per child
 - Curfew information (start/end times)
 - Reading goal tracking
+- Screen time used today / this week, daily screen time remaining
+- Bonus time granted today and bonus time remaining (countdown)
 
 ### Switches
 - Pause/resume time limits (1 hour default)
+- Enable/disable daily time limits
 
 ### Buttons
 - Quick pause: 15 minutes
 - Quick pause: 30 minutes
 - Quick pause: 1 hour
+- Clear active bonus time (restores baseline schedule)
+
+### Services
+- `amazonparent.add_bonus_time` — Grant additive bonus minutes while preserving baseline schedules/limits (passing `0` clears active bonus time)
+- `amazonparent.clear_bonus_time` — Clear active bonus time and restore baseline schedules/limits
 
 ### Scheduled Re-Authentication
 - Automatic full browser re-login every ~20 hours (configurable, randomized ±1h) to get fresh cookies

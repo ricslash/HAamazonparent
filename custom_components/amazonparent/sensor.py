@@ -1,11 +1,11 @@
 """Sensor platform for Amazon Parent Dashboard."""
 import logging
-from datetime import datetime
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -43,6 +43,10 @@ async def async_setup_entry(
 
             # Time remaining sensor
             entities.append(ChildTimeRemainingSensor(coordinator, member))
+
+            # Bonus time granted today & remaining sensors
+            entities.append(ChildBonusTimeSensor(coordinator, member))
+            entities.append(ChildBonusTimeRemainingSensor(coordinator, member))
 
     async_add_entities(entities)
 
@@ -102,7 +106,7 @@ class ChildTimeLimitSensor(AmazonParentSensorBase):
             return None
 
         # Get today's schedule
-        today = datetime.now().strftime("%A")
+        today = dt_util.now().strftime("%A")
         day_schedule = schedule.get_day_schedule(today)
 
         if day_schedule and day_schedule.time_limits.content_time_limits_enabled:
@@ -117,12 +121,13 @@ class ChildTimeLimitSensor(AmazonParentSensorBase):
 
         schedule = self.coordinator.get_schedule_for_child(self._child.directed_id)
         if schedule:
-            today = datetime.now().strftime("%A")
+            today = dt_util.now().strftime("%A")
             day_schedule = schedule.get_day_schedule(today)
 
             if day_schedule:
                 attrs["enabled"] = day_schedule.time_limits.content_time_limits_enabled
                 attrs["day"] = day_schedule.name
+                attrs["category_limits"] = dict(day_schedule.time_limits.content_time_limits)
 
                 # Add curfew info
                 if day_schedule.has_curfew:
@@ -307,7 +312,7 @@ class ChildTimeRemainingSensor(AmazonParentSensorBase):
         if not schedule:
             return None
 
-        today = datetime.now().strftime("%A")
+        today = dt_util.now().strftime("%A")
         day_schedule = schedule.get_day_schedule(today)
         if not day_schedule or not day_schedule.time_limits.content_time_limits_enabled:
             return None
@@ -333,7 +338,7 @@ class ChildTimeRemainingSensor(AmazonParentSensorBase):
 
         schedule = self.coordinator.get_schedule_for_child(self._child.directed_id)
         if schedule:
-            today = datetime.now().strftime("%A")
+            today = dt_util.now().strftime("%A")
             day_schedule = schedule.get_day_schedule(today)
             if day_schedule:
                 attrs["daily_limit_minutes"] = day_schedule.time_limits.total_minutes
@@ -345,4 +350,100 @@ class ChildTimeRemainingSensor(AmazonParentSensorBase):
             today_activity = activity.get_today_activity(today_str)
             attrs["used_minutes"] = today_activity.total_minutes if today_activity else 0
 
+        return attrs
+
+
+class ChildBonusTimeSensor(AmazonParentSensorBase, RestoreEntity):
+    """Sensor tracking today's granted Amazon bonus minutes for a child."""
+
+    def __init__(
+        self,
+        coordinator: AmazonParentDataUpdateCoordinator,
+        child: HouseholdMember,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, child)
+        self._attr_unique_id = f"{child.directed_id}_bonus_time"
+        self._attr_name = "Bonus Time"
+        self._attr_icon = "mdi:clock-plus-outline"
+        self._attr_native_unit_of_measurement = "min"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    async def async_added_to_hass(self) -> None:
+        """Restore today's bonus-given counter across Home Assistant restarts."""
+        await super().async_added_to_hass()
+        cid = self._child.directed_id
+        today_str = dt_util.now().strftime("%Y-%m-%d")
+        last_state = await self.async_get_last_state()
+        if not last_state or last_state.attributes.get("tracking_date") != today_str:
+            return
+        try:
+            restored = int(float(last_state.state))
+        except (ValueError, TypeError):
+            return
+        if restored > self.coordinator.child_bonus_given_today.get(cid, 0):
+            self.coordinator.child_bonus_given_today[cid] = restored
+
+    @property
+    def native_value(self):
+        """Return total bonus minutes granted today."""
+        return self.coordinator.child_bonus_given_today.get(self._child.directed_id, 0)
+
+    @property
+    def extra_state_attributes(self):
+        """Return allotted bonus minutes and tracking date."""
+        attrs = super().extra_state_attributes
+        cid = self._child.directed_id
+        attrs["allotted_minutes"] = self.coordinator.child_bonus_allotted.get(cid, 0)
+        attrs["tracking_date"] = dt_util.now().strftime("%Y-%m-%d")
+        return attrs
+
+
+class ChildBonusTimeRemainingSensor(AmazonParentSensorBase, RestoreEntity):
+    """Sensor showing remaining active bonus minutes for a child."""
+
+    def __init__(
+        self,
+        coordinator: AmazonParentDataUpdateCoordinator,
+        child: HouseholdMember,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, child)
+        self._attr_unique_id = f"{child.directed_id}_bonus_time_remaining"
+        self._attr_name = "Bonus Time Remaining"
+        self._attr_icon = "mdi:timer-plus-outline"
+        self._attr_native_unit_of_measurement = "min"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    async def async_added_to_hass(self) -> None:
+        """Restore an active bonus expiration timestamp across restarts."""
+        await super().async_added_to_hass()
+        cid = self._child.directed_id
+        if self.coordinator.child_bonus_allotted.get(cid, 0) <= 0:
+            return
+        last_state = await self.async_get_last_state()
+        if not last_state:
+            return
+        raw_exp = last_state.attributes.get("expires_at")
+        if not raw_exp:
+            return
+        parsed = dt_util.parse_datetime(str(raw_exp))
+        if parsed and parsed > dt_util.now():
+            self.coordinator.child_bonus_expires_at[cid] = parsed
+
+    @property
+    def native_value(self):
+        """Return remaining minutes on the active bonus window."""
+        return self.coordinator.get_bonus_remaining_minutes(self._child.directed_id)
+
+    @property
+    def extra_state_attributes(self):
+        """Return bonus expiration timestamp and today's totals."""
+        attrs = super().extra_state_attributes
+        cid = self._child.directed_id
+        exp = self.coordinator.child_bonus_expires_at.get(cid)
+        now = dt_util.now()
+        attrs["expires_at"] = exp.isoformat() if (exp is not None and exp > now) else None
+        attrs["allotted_minutes"] = self.coordinator.child_bonus_allotted.get(cid, 0)
+        attrs["given_today_minutes"] = self.coordinator.child_bonus_given_today.get(cid, 0)
         return attrs

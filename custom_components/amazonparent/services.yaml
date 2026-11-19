@@ -1,0 +1,38 @@
+add_bonus_time:
+  name: Add bonus time
+  description: >-
+    Add additive bonus screen-time minutes for a child while preserving their
+    baseline Amazon schedule and limits. Setting minutes to 0 clears active
+    bonus time and restores the baseline schedule.
+  fields:
+    child:
+      name: Child
+      description: Child first name (case-insensitive) or Amazon directedId.
+      required: true
+      example: Toka
+      selector:
+        text:
+    minutes:
+      name: Minutes
+      description: Minutes to add (1–1440), or 0 to clear active bonus time.
+      required: true
+      default: 15
+      selector:
+        number:
+          min: 0
+          max: 1440
+          unit_of_measurement: min
+
+clear_bonus_time:
+  name: Clear bonus time
+  description: >-
+    Clear all currently allotted bonus time for a child and restore their
+    baseline daily schedule and limits.
+  fields:
+    child:
+      name: Child
+      description: Child first name (case-insensitive) or Amazon directedId.
+      required: true
+      example: Toka
+      selector:
+        text:

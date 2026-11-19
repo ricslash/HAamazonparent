@@ -63,8 +63,15 @@ class TimeLimits:
 
     @property
     def total_minutes(self) -> int:
-        """Return total daily limit in minutes."""
-        return self.content_time_limits.get("ALL", 0)
+        """Return total daily limit in minutes.
+
+        When an overall 'ALL' cap is set (e.g. weekends), return it; otherwise
+        return the highest per-category limit (e.g. weekday category_VIDEO /
+        category_APP = 120m; bonus time adds to each enabled category limit).
+        """
+        if "ALL" in self.content_time_limits:
+            return self.content_time_limits["ALL"]
+        return max(self.content_time_limits.values(), default=0)
 
 
 @dataclass

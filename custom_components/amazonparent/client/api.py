@@ -16,6 +16,9 @@ from ..const import (
     API_SET_OFFSCREEN_TIME,
     API_SET_TIME_LIMIT,
     API_GET_WEEKLY_ACTIVITIES,
+    API_GET_BONUS_TIME,
+    API_SET_BONUS_TIME,
+    API_DELETE_BONUS_TIME,
     LOGGER_NAME,
 )
 from ..exceptions import (
@@ -438,6 +441,93 @@ class AmazonParentAPIClient:
     async def async_resume_limits(self, directed_ids: list[str]) -> None:
         """Resume (unpause) time limits for children."""
         await self.async_pause_limits(directed_ids, 0)
+
+    async def async_get_bonus_time(self, child_directed_id: str) -> int:
+        """Get currently allotted bonus time in minutes for a child.
+
+        Amazon resets this counter daily / when delete-bonus-time is called.
+        """
+        if not self.is_authenticated():
+            raise AuthenticationError("Not authenticated")
+
+        session = await self._get_session()
+        url = f"{API_BASE_URL}{API_GET_BONUS_TIME}"
+        params = {"childDirectedId": child_directed_id}
+
+        async with session.get(url, headers=self._get_headers(), params=params) as resp:
+            if resp.status in (401, 403):
+                _LOGGER.error(f"Session expired (HTTP {resp.status})")
+                raise SessionExpiredError(f"Session expired (HTTP {resp.status})")
+            if resp.status != 200:
+                text = await resp.text()
+                raise NetworkError(f"Failed to get bonus time: {resp.status} - {text}")
+
+            data = await resp.json()
+            if data is None:
+                return 0
+            return int(data)
+
+    async def async_add_bonus_time(
+        self, child_directed_id: str, duration_minutes: int, timezone_str: str
+    ) -> None:
+        """Add bonus time for a child while preserving baseline schedules and limits.
+
+        Amazon's PUT /ajax/set-bonus-time endpoint is server-side additive:
+        it adds ``duration_minutes`` to each enabled daily content limit and
+        opens (or extends) a temporary ``curfewConfigList`` unlock window
+        starting from ``currentTime``, leaving the child's baseline schedule
+        and limits intact so ``delete-bonus-time`` restores the baseline cleanly.
+        """
+        if not self.is_authenticated():
+            raise AuthenticationError("Not authenticated")
+
+        session = await self._get_session()
+        url = f"{API_BASE_URL}{API_SET_BONUS_TIME}"
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        payload = {
+            "childDirectedId": child_directed_id,
+            "currentTime": now_iso,
+            "currentTimeZone": timezone_str,
+            "bonusTimeConfigurationType": "Vacation" if int(duration_minutes) >= 1440 else "Duration",
+            "bonusTimeDurationInMinutes": int(duration_minutes),
+        }
+
+        async with session.put(
+            url, headers=self._get_headers(for_post=True), json=payload
+        ) as resp:
+            if resp.status in (401, 403):
+                _LOGGER.error(f"Session expired (HTTP {resp.status})")
+                raise SessionExpiredError(f"Session expired (HTTP {resp.status})")
+            if resp.status != 200:
+                text = await resp.text()
+                raise NetworkError(f"Failed to add bonus time: {resp.status} - {text}")
+
+            _LOGGER.debug(
+                "Added %sm bonus time for child %s",
+                duration_minutes,
+                child_directed_id[:20],
+            )
+
+    async def async_delete_bonus_time(self, child_directed_id: str) -> None:
+        """Clear allotted bonus time for a child, restoring baseline limits/curfew."""
+        if not self.is_authenticated():
+            raise AuthenticationError("Not authenticated")
+
+        session = await self._get_session()
+        url = f"{API_BASE_URL}{API_DELETE_BONUS_TIME}"
+        payload = {"childDirectedId": child_directed_id}
+
+        async with session.put(
+            url, headers=self._get_headers(for_post=True), json=payload
+        ) as resp:
+            if resp.status in (401, 403):
+                _LOGGER.error(f"Session expired (HTTP {resp.status})")
+                raise SessionExpiredError(f"Session expired (HTTP {resp.status})")
+            if resp.status != 200:
+                text = await resp.text()
+                raise NetworkError(f"Failed to delete bonus time: {resp.status} - {text}")
+
+            _LOGGER.debug("Cleared bonus time for child %s", child_directed_id[:20])
 
     async def close(self) -> None:
         """Close the API client session."""
